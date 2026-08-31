@@ -279,6 +279,25 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
   background: var(--fg); color: var(--bg); padding: 11px 18px; border-radius: 10px; font-size: 14px;
   font-weight: 600; white-space: nowrap; animation: up .15s ease-out;
 }
+
+/* ===== 잠금 화면 ===== */
+.lock {
+  position: fixed; inset: 0; z-index: 1000; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.lock-card { width: 100%; max-width: 320px; text-align: center; }
+.lock-logo { font-size: 56px; font-weight: 800; letter-spacing: -2px; line-height: 1; }
+.lock-desc { color: var(--muted); font-size: 14px; margin: 16px 0 22px; line-height: 1.5; }
+.lock input {
+  width: 100%; background: var(--field); border: 1px solid var(--line); border-radius: 12px;
+  padding: 13px 14px; font-size: 16px; margin-bottom: 9px; outline: none; text-align: center;
+}
+.lock input:focus { border-color: var(--line2); }
+.lock-btn {
+  width: 100%; background: var(--btn); color: var(--btnfg); border-radius: 12px;
+  padding: 13px 0; font-size: 15px; font-weight: 700; margin-top: 5px;
+}
+.lock-err { color: #ff4444; font-size: 13px; margin-top: 12px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -292,7 +311,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.5';
+var APP_VER = 'v1.6';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -850,6 +869,10 @@ function viewSettings() {
   html += '<div class="sec-title">화면</div>';
   html += '<button class="row" data-act="theme"><div class="row-main"><div class="row-t">다크 모드</div></div>' +
     '<span class="sw-toggle' + (dark ? ' on' : '') + '"><i></i></span></button>';
+
+  html += '<div class="sec-title">보안</div>';
+  html += '<button class="row" data-act="passwd"><div class="row-main"><div class="row-t">비밀번호 변경</div>' +
+    '<div class="row-s">이 기기에서 앱을 열 때 묻는 비밀번호</div></div>' + ic('right', 15) + '</button>';
 
   html += '<div class="sec-title">데이터</div>';
   html += '<button class="row" data-act="export"><div class="row-main"><div class="row-t">백업 내보내기</div>' +
@@ -1417,6 +1440,7 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (act === 'theme') { applyTheme(getTheme() === 'dark' ? 'light' : 'dark'); await render(); return; }
+  if (act === 'passwd') { await changePassword(); return; }
   if (act === 'export') { await exportData(); return; }
   if (act === 'import') { importData(); return; }
   if (act === 'wipe') { await wipeAll(); return; }
@@ -1444,9 +1468,81 @@ document.addEventListener('keydown', function (e) {
 });
 window.addEventListener('hashchange', function () { closeOvl(); render(); });
 
+// ===== 잠금 =====
+var K_LOCK = 'th-lock';
+async function sha256Hex(str) {
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+}
+function getLock() {
+  try { return JSON.parse(localStorage.getItem(K_LOCK)); } catch (e) { return null; }
+}
+async function saveLock(pw) {
+  var salt = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  localStorage.setItem(K_LOCK, JSON.stringify({ salt: salt, hash: await sha256Hex(salt + pw) }));
+}
+async function checkPw(pw) {
+  var lock = getLock();
+  if (!lock) return false;
+  return (await sha256Hex(lock.salt + pw)) === lock.hash;
+}
+function showLockScreen() {
+  return new Promise(function (resolve) {
+    var isSetup = !getLock();
+    var ov = document.createElement('div');
+    ov.className = 'lock';
+    ov.innerHTML = '<div class="lock-card">' +
+      '<div class="lock-logo">@</div>' +
+      '<div class="lock-desc">' + (isSetup
+        ? '처음 오셨네요.<br>사용할 비밀번호를 정해주세요.'
+        : '비밀번호를 입력해주세요.') + '</div>' +
+      '<input type="password" id="lk1" placeholder="비밀번호" autocomplete="off" inputmode="text">' +
+      (isSetup ? '<input type="password" id="lk2" placeholder="비밀번호 확인" autocomplete="off">' : '') +
+      '<button class="lock-btn" id="lkgo">' + (isSetup ? '설정하고 시작하기' : '확인') + '</button>' +
+      '<p class="lock-err" id="lkerr"></p></div>';
+    document.body.appendChild(ov);
+    var pw1 = ov.querySelector('#lk1');
+    var errEl = ov.querySelector('#lkerr');
+    pw1.focus();
+    async function submit() {
+      var v = pw1.value;
+      if (isSetup) {
+        var v2 = ov.querySelector('#lk2').value;
+        if (v.length < 4) { errEl.textContent = '4자 이상으로 정해주세요.'; return; }
+        if (v !== v2) { errEl.textContent = '두 입력이 서로 다릅니다.'; return; }
+        await saveLock(v);
+      } else if (!(await checkPw(v))) {
+        errEl.textContent = '비밀번호가 틀렸습니다.';
+        pw1.value = '';
+        pw1.focus();
+        return;
+      }
+      try { sessionStorage.setItem('th-unlocked', '1'); } catch (e) {}
+      ov.remove();
+      resolve();
+    }
+    ov.querySelector('#lkgo').addEventListener('click', submit);
+    ov.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+  });
+}
+async function changePassword() {
+  var cur = prompt('현재 비밀번호를 입력해주세요.');
+  if (cur === null) return;
+  if (!(await checkPw(cur))) { alert('비밀번호가 틀렸습니다.'); return; }
+  var nw = prompt('새 비밀번호를 입력해주세요. (4자 이상)');
+  if (nw === null) return;
+  if (nw.length < 4) { alert('4자 이상으로 정해주세요.'); return; }
+  await saveLock(nw);
+  toast('비밀번호를 변경했습니다');
+}
+
 // ===== 시작 =====
 (async function start() {
   applyTheme(getTheme());
+  var unlocked = false;
+  try { unlocked = sessionStorage.getItem('th-unlocked') === '1'; } catch (e) {}
+  if (!unlocked || !getLock()) await showLockScreen();
   try {
     db = await openDB();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
