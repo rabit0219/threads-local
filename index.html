@@ -75,6 +75,12 @@ svg { display: block; }
 .avatar.lg { width: 66px; height: 66px; font-size: 27px; }
 .p-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .p-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-topic {
+  font-size: 15px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; display: inline-flex; gap: 5px; align-items: center;
+}
+.p-topic .chev { color: var(--muted); flex-shrink: 0; }
+.p-topic:active { opacity: .5; }
 .p-time { color: var(--muted); font-size: 14px; flex-shrink: 0; }
 .p-sp { flex: 1; }
 .p-more { color: var(--muted); padding: 2px 0 2px 10px; flex-shrink: 0; }
@@ -193,7 +199,18 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
   width: 100%; border: none; outline: none; background: none; font-size: 16px; line-height: 1.42;
   min-height: 26px; padding: 5px 0 0;
 }
-.cbox .c-name { font-weight: 600; font-size: 15px; }
+.cbox .c-name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 5px; }
+.cbox .c-name .chev { color: var(--muted); font-weight: 400; flex-shrink: 0; }
+.c-topic {
+  flex: 1; min-width: 0; border: none; outline: none; background: none;
+  font-size: 15px; font-weight: 400; color: var(--fg); padding: 0;
+}
+.c-topic::placeholder { color: var(--muted); }
+.topic-head {
+  padding: 18px 16px 14px; border-bottom: 1px solid var(--line);
+}
+.topic-head h2 { font-size: 22px; font-weight: 700; }
+.topic-head p { color: var(--muted); font-size: 14px; margin-top: 5px; }
 .c-tools { display: flex; align-items: center; gap: 18px; padding: 10px 0 4px; color: var(--muted); }
 .c-imgs { display: flex; gap: 8px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
 .c-imgs::-webkit-scrollbar { display: none; }
@@ -251,7 +268,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.2';
+var APP_VER = 'v1.3';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -560,6 +577,8 @@ function postRow(p, o) {
     '<div class="p-col-r">' +
       '<div class="p-head">' +
         '<span class="p-name" data-act="user" data-id="' + u.id + '">' + esc(u.handle) + '</span>' +
+        (p.topic ? '<span class="p-topic" data-act="topic" data-topic="' + esc(p.topic) + '">' +
+          '<span class="chev">›</span>' + esc(p.topic) + '</span>' : '') +
         (o.detail ? '' : '<span class="p-time">' + rel(p.ts) + '</span>') +
         '<span class="p-sp"></span>' +
         '<button class="p-more" data-act="more" data-id="' + p.id + '">' + ic('more', 18) + '</button>' +
@@ -679,6 +698,16 @@ function viewUser(id, isMeTab) {
   appEl.innerHTML = html;
 }
 
+// ===== 주제 =====
+function viewTopic(name) {
+  bar({ back: true, title: name });
+  var roots = POSTS.filter(function (p) { return p.parent_id == null && p.topic === name; });
+  var total = POSTS.filter(function (p) { return p.topic === name; }).length;
+  appEl.innerHTML = '<div class="topic-head"><h2>' + esc(name) + '</h2>' +
+    '<p>스레드 ' + total + '개</p></div>' +
+    listHtml(roots, esc(name) + ' 주제로 쓴 글이 아직 없습니다.');
+}
+
 // ===== 설정 =====
 function viewSettings() {
   bar({ title: '설정' });
@@ -726,6 +755,11 @@ function parseHash() {
   if (m) return { route: 'post', id: parseInt(m[1], 10) };
   m = /^\/u\/(\d+)/.exec(h);
   if (m) return { route: 'user', id: parseInt(m[1], 10) };
+  m = /^\/t\/(.+)$/.exec(h);
+  if (m) {
+    try { return { route: 'topic', name: decodeURIComponent(m[1]) }; }
+    catch (e) { return { route: 'feed' }; }
+  }
   if (h === '/me') return { route: 'me' };
   if (h === '/settings') return { route: 'settings' };
   return { route: 'feed' };
@@ -735,7 +769,7 @@ async function render() {
   await loadData();
   if (!ME) { await ensureSeed(); await loadData(); }
   var h = parseHash();
-  var key = h.route + ':' + (h.id || '');
+  var key = h.route + ':' + (h.id || h.name || '');
   if (key !== _lastRoute) PROF_TAB = 'posts';
   _lastRoute = key;
   var rb = document.querySelector('.replybar');
@@ -744,6 +778,7 @@ async function render() {
   if (h.route === 'post') viewPost(h.id);
   else if (h.route === 'user') viewUser(h.id, false);
   else if (h.route === 'me') viewUser(ME.id, true);
+  else if (h.route === 'topic') viewTopic(h.name);
   else if (h.route === 'settings') viewSettings();
   else viewFeed();
   if (h.route !== 'post') window.scrollTo(0, 0);
@@ -813,6 +848,14 @@ async function toggleLike(pid) {
 // ===== 작성 =====
 var CBOX = [];
 var CREPLY = null;
+var CTOPIC = '';
+function allTopics() {
+  var seen = {}, out = [];
+  POSTS.forEach(function (p) {
+    if (p.topic && !seen[p.topic]) { seen[p.topic] = 1; out.push(p.topic); }
+  });
+  return out.sort();
+}
 function composerHtml() {
   var isReply = CREPLY != null;
   var canPost = CBOX.some(function (b) { return b.text.trim() || b.imgs.length; });
@@ -821,7 +864,14 @@ function composerHtml() {
     return '<div class="cbox">' +
       '<div class="p-col-l">' + avatarHtml(ME) + (i < last ? '<div class="rail"></div>' : '') + '</div>' +
       '<div class="p-col-r">' +
-        '<div class="c-name">' + esc(ME.handle) + '</div>' +
+        '<div class="c-name">' + esc(ME.handle) +
+          (!isReply && i === 0 ? '<span class="chev">›</span>' +
+            '<input class="c-topic" id="c-topic" value="' + esc(CTOPIC) + '" list="topic-list" ' +
+            'placeholder="커뮤니티 또는 주제" maxlength="30" autocomplete="off">' +
+            '<datalist id="topic-list">' + allTopics().map(function (t) {
+              return '<option value="' + esc(t) + '"></option>';
+            }).join('') + '</datalist>' : '') +
+        '</div>' +
         '<textarea data-box="' + i + '" placeholder="' +
           (isReply ? '답글 남기기...' : (i === 0 ? '무슨 생각 하고 계신가요?' : '스레드에 추가...')) +
           '" rows="1">' + esc(b.text) + '</textarea>' +
@@ -873,6 +923,8 @@ function drawComposer(focusBox) {
       }
     });
   });
+  var tp = ov.querySelector('#c-topic');
+  if (tp) tp.addEventListener('input', function () { CTOPIC = tp.value; });
   var idx = focusBox == null ? 0 : focusBox;
   if (tas[idx]) {
     tas[idx].focus({ preventScroll: true });
@@ -883,32 +935,34 @@ function drawComposer(focusBox) {
 function openComposer(replyTo) {
   CREPLY = replyTo == null ? null : replyTo;
   CBOX = [{ text: '', imgs: [] }];
+  CTOPIC = '';
   drawComposer(0);
 }
 async function submitComposer() {
   var boxes = CBOX.filter(function (b) { return b.text.trim() || b.imgs.length; });
   if (!boxes.length) return;
   var t = Date.now();
+  var topic = (CTOPIC || '').trim().replace(/^[#›\s]+/, '').slice(0, 30) || null;
   if (CREPLY != null) {
     await put('posts', {
       author_id: ME.id, text: boxes[0].text.trim(), imgs: boxes[0].imgs,
-      parent_id: CREPLY, chain_of: null, ts: t
+      parent_id: CREPLY, chain_of: null, topic: null, ts: t
     });
   } else {
     var rootId = null, prevId = null;
     for (var i = 0; i < boxes.length; i++) {
       var id = await put('posts', {
         author_id: ME.id, text: boxes[i].text.trim(), imgs: boxes[i].imgs,
-        parent_id: prevId, chain_of: rootId, ts: t + i
+        parent_id: prevId, chain_of: rootId, topic: topic, ts: t + i
       });
       if (i === 0) rootId = id;
       prevId = id;
     }
   }
   closeOvl();
-  CBOX = []; CREPLY = null;
+  CBOX = []; CREPLY = null; CTOPIC = '';
   await render();
-  toast('게시했습니다');
+  toast(topic ? topic + '에 게시했습니다' : '게시했습니다');
 }
 
 // ===== 더보기 시트 =====
@@ -1118,18 +1172,19 @@ async function ensureSeed() {
   });
   setMeId(meIdNew);
 
-  async function P(author, text, ts, parent, chain) {
+  async function P(author, text, ts, parent, chain, topic) {
     return await put('posts', {
       author_id: author, text: text, imgs: [],
-      parent_id: parent == null ? null : parent, chain_of: chain == null ? null : chain, ts: ts
+      parent_id: parent == null ? null : parent, chain_of: chain == null ? null : chain,
+      topic: topic || null, ts: ts
     });
   }
   var a1 = await P(u3, '회사 앞 카페가 원두를 바꿨는데 이게 훨씬 낫다 진짜', t - 8 * M);
   await P(u2, '어디에요? 나도 가봐야지', t - 5 * M, a1);
 
-  var b1 = await P(u2, '새 키보드 3일차 후기', t - 40 * M);
-  var b2 = await P(u2, '적축 쓰다가 갈축으로 넘어왔는데 손가락이 아직 적응을 못 함. 오타율이 두 배는 된 듯', t - 40 * M + 1, b1, b1);
-  await P(u2, '근데 소리는 확실히 좋다. 이 맛에 바꾸는 거지', t - 40 * M + 2, b2, b1);
+  var b1 = await P(u2, '새 키보드 3일차 후기', t - 40 * M, null, null, '키보드');
+  var b2 = await P(u2, '적축 쓰다가 갈축으로 넘어왔는데 손가락이 아직 적응을 못 함. 오타율이 두 배는 된 듯', t - 40 * M + 1, b1, b1, '키보드');
+  await P(u2, '근데 소리는 확실히 좋다. 이 맛에 바꾸는 거지', t - 40 * M + 2, b2, b1, '키보드');
 
   var c1 = await P(meIdNew, '주말에 아무 계획 없는 게 이렇게 좋을 일인가', t - 2 * H);
   var c2 = await P(u3, '그게 최고의 계획이죠', t - 100 * M, c1);
@@ -1138,12 +1193,12 @@ async function ensureSeed() {
   await P(u3, '장마 끝났다더니 또 비 오네. 우산 어디 뒀더라', t - 5 * H);
   await P(u2, '퇴근길 하늘이 너무 예뻐서 세 번 멈춰 섰다', t - 9 * H);
 
-  var e1 = await P(meIdNew, '오랜만에 5km 러닝. 3km 지점부터 다리가 남의 다리 같았음', t - 1 * D);
+  var e1 = await P(meIdNew, '오랜만에 5km 러닝. 3km 지점부터 다리가 남의 다리 같았음', t - 1 * D, null, null, '러닝');
   await P(u2, '그 구간이 제일 힘들죠. 넘기면 갑자기 편해짐', t - 1 * D + 40 * M, e1);
 
-  await P(u3, '요즘 읽는 책 — 도시는 무엇으로 사는가. 출퇴근길에 딱 좋다', t - 2 * D);
-  await P(u2, '이번 주 목표: 하루에 커밋 하나라도 남기기', t - 3 * D);
-  await P(meIdNew, '로컬에 쓰레드 비슷한 걸 하나 만들어봤다. 생각보다 잘 굴러감', t - 4 * D);
+  await P(u3, '요즘 읽는 책 — 도시는 무엇으로 사는가. 출퇴근길에 딱 좋다', t - 2 * D, null, null, '독서');
+  await P(u2, '이번 주 목표: 하루에 커밋 하나라도 남기기', t - 3 * D, null, null, '개발');
+  await P(meIdNew, '로컬에 쓰레드 비슷한 걸 하나 만들어봤다. 생각보다 잘 굴러감', t - 4 * D, null, null, '개발');
   await P(u3, '냉면 시즌 끝나기 전에 한 번 더 가야 하는데', t - 6 * D);
 
   var seedLikes = [[a1, u2], [a1, meIdNew], [b1, meIdNew], [b1, u3], [c1, u3], [c1, u2], [e1, u3]];
@@ -1168,6 +1223,11 @@ document.addEventListener('click', async function (e) {
   if (act === 'open') { closeOvl(); nav('#/p/' + id); return; }
   if (act === 'user') { e.stopPropagation(); closeOvl(); nav(ME && id === ME.id ? '#/me' : '#/u/' + id); return; }
   if (act === 'img') { e.stopPropagation(); openImg(el.dataset.src); return; }
+  if (act === 'topic') {
+    e.stopPropagation(); closeOvl();
+    nav('#/t/' + encodeURIComponent(el.dataset.topic));
+    return;
+  }
   if (act === 'like') { e.stopPropagation(); await toggleLike(id); return; }
   if (act === 'reply') { e.stopPropagation(); openComposer(id); return; }
   if (act === 'more') { e.stopPropagation(); openMore(id); return; }
