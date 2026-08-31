@@ -280,6 +280,36 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
   font-weight: 600; white-space: nowrap; animation: up .15s ease-out;
 }
 
+/* ===== 사진 크롭 ===== */
+.crop-ov {
+  position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,.96);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  touch-action: none; padding: 20px;
+}
+.crop-tip { color: rgba(255,255,255,.7); font-size: 13px; text-align: center; }
+.crop-stage { position: relative; overflow: hidden; border-radius: 4px; }
+.crop-stage img { display: block; user-select: none; -webkit-user-select: none; pointer-events: none; }
+.crop-rect {
+  position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(0,0,0,.6);
+  cursor: move; touch-action: none;
+}
+.crop-rect.round { border-radius: 50%; }
+.crop-handle { position: absolute; width: 30px; height: 30px; touch-action: none; }
+.crop-handle::after {
+  content: ''; position: absolute; width: 14px; height: 14px; background: #fff;
+  border-radius: 50%; top: 8px; left: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.5);
+}
+.crop-handle.nw { top: -15px; left: -15px; cursor: nwse-resize; }
+.crop-handle.ne { top: -15px; right: -15px; cursor: nesw-resize; }
+.crop-handle.sw { bottom: -15px; left: -15px; cursor: nesw-resize; }
+.crop-handle.se { bottom: -15px; right: -15px; cursor: nwse-resize; }
+.crop-btns { display: flex; gap: 9px; flex-wrap: wrap; justify-content: center; }
+.crop-btns button {
+  border-radius: 22px; padding: 11px 20px; font-size: 15px; font-weight: 700;
+  background: rgba(255,255,255,.16); color: #fff;
+}
+.crop-btns .crop-apply { background: #fff; color: #000; }
+
 /* ===== 잠금 화면 ===== */
 .lock {
   position: fixed; inset: 0; z-index: 1000; background: var(--bg);
@@ -311,7 +341,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.6';
+var APP_VER = 'v1.7';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -467,15 +497,130 @@ function fileToDataUrl(file) {
     fr.readAsDataURL(file);
   });
 }
-function pickImages(cb) {
+// dataURL을 받아 크롭 UI를 띄우고 잘린 dataURL / 'full'(원본) / null(취소)을 돌려준다.
+// aspect(가로/세로)를 주면 그 비율로 고정한다. round는 원형 미리보기(프로필용).
+function openCropper(dataUrl, aspect, tip, round) {
+  return new Promise(function (resolve) {
+    var img = new Image();
+    img.onload = function () {
+      var maxW = Math.min(window.innerWidth * 0.9, 620);
+      var maxH = window.innerHeight * 0.6;
+      var fit = Math.min(maxW / img.width, maxH / img.height, 1);
+      var dw = Math.max(1, Math.round(img.width * fit));
+      var dh = Math.max(1, Math.round(img.height * fit));
+
+      var ov = document.createElement('div');
+      ov.className = 'crop-ov';
+      ov.innerHTML =
+        (tip ? '<p class="crop-tip">' + esc(tip) + '</p>' : '') +
+        '<div class="crop-stage" style="width:' + dw + 'px;height:' + dh + 'px">' +
+          '<img src="' + dataUrl + '" style="width:' + dw + 'px;height:' + dh + 'px" alt="">' +
+          '<div class="crop-rect' + (round ? ' round' : '') + '" id="crop-rect">' +
+            '<span class="crop-handle nw" data-h="nw"></span>' +
+            '<span class="crop-handle ne" data-h="ne"></span>' +
+            '<span class="crop-handle sw" data-h="sw"></span>' +
+            '<span class="crop-handle se" data-h="se"></span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="crop-btns">' +
+          '<button type="button" class="crop-cancel">취소</button>' +
+          (aspect ? '' : '<button type="button" class="crop-full">원본 그대로</button>') +
+          '<button type="button" class="crop-apply">완료</button>' +
+        '</div>';
+      document.body.appendChild(ov);
+
+      var rect;
+      if (aspect) {
+        var w0 = dw * 0.92, h0 = w0 / aspect;
+        if (h0 > dh * 0.92) { h0 = dh * 0.92; w0 = h0 * aspect; }
+        rect = { x: Math.round((dw - w0) / 2), y: Math.round((dh - h0) / 2), w: Math.round(w0), h: Math.round(h0) };
+      } else {
+        rect = { x: 0, y: 0, w: dw, h: dh };
+      }
+      var rectEl = ov.querySelector('#crop-rect');
+      function draw() {
+        rectEl.style.left = rect.x + 'px';
+        rectEl.style.top = rect.y + 'px';
+        rectEl.style.width = rect.w + 'px';
+        rectEl.style.height = rect.h + 'px';
+      }
+      draw();
+
+      var MIN = 40;
+      var drag = null;
+      rectEl.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        var h = e.target.dataset && e.target.dataset.h;
+        drag = { mode: h || 'move', sx: e.clientX, sy: e.clientY, r: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
+        try { rectEl.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      rectEl.addEventListener('pointermove', function (e) {
+        if (!drag) return;
+        var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy, r = drag.r;
+        if (drag.mode === 'move') {
+          rect.x = Math.min(Math.max(0, r.x + dx), dw - r.w);
+          rect.y = Math.min(Math.max(0, r.y + dy), dh - r.h);
+        } else if (aspect) {
+          var m = drag.mode;
+          var w = m.indexOf('w') >= 0 ? r.w - dx : r.w + dx;
+          w = Math.max(MIN, w);
+          var maxW2 = m.indexOf('w') >= 0 ? r.x + r.w : dw - r.x;
+          var maxH2 = m.indexOf('n') >= 0 ? r.y + r.h : dh - r.y;
+          w = Math.min(w, maxW2, maxH2 * aspect);
+          var h2 = w / aspect;
+          if (h2 < MIN) { h2 = MIN; w = h2 * aspect; }
+          rect.w = w; rect.h = h2;
+          rect.x = m.indexOf('w') >= 0 ? (r.x + r.w) - w : r.x;
+          rect.y = m.indexOf('n') >= 0 ? (r.y + r.h) - h2 : r.y;
+        } else {
+          var x1 = r.x, y1 = r.y, x2 = r.x + r.w, y2 = r.y + r.h;
+          if (drag.mode.indexOf('w') >= 0) x1 = Math.min(Math.max(0, r.x + dx), x2 - MIN);
+          if (drag.mode.indexOf('e') >= 0) x2 = Math.max(Math.min(dw, r.x + r.w + dx), x1 + MIN);
+          if (drag.mode.indexOf('n') >= 0) y1 = Math.min(Math.max(0, r.y + dy), y2 - MIN);
+          if (drag.mode.indexOf('s') >= 0) y2 = Math.max(Math.min(dh, r.y + r.h + dy), y1 + MIN);
+          rect.x = x1; rect.y = y1; rect.w = x2 - x1; rect.h = y2 - y1;
+        }
+        draw();
+      });
+      rectEl.addEventListener('pointerup', function () { drag = null; });
+      rectEl.addEventListener('pointercancel', function () { drag = null; });
+
+      function done(v) { ov.remove(); resolve(v); }
+      ov.querySelector('.crop-cancel').addEventListener('click', function () { done(null); });
+      var fullBtn = ov.querySelector('.crop-full');
+      if (fullBtn) fullBtn.addEventListener('click', function () { done('full'); });
+      ov.querySelector('.crop-apply').addEventListener('click', function () {
+        var sc = img.width / dw; // 표시 좌표 → 원본 좌표
+        var sx = Math.round(rect.x * sc), sy = Math.round(rect.y * sc);
+        var sw = Math.max(1, Math.round(rect.w * sc)), sh = Math.max(1, Math.round(rect.h * sc));
+        var out = Math.min(1, 1400 / Math.max(sw, sh));
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(sw * out));
+        c.height = Math.max(1, Math.round(sh * out));
+        c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        done(c.toDataURL('image/jpeg', 0.88));
+      });
+    };
+    img.onerror = function () { resolve('full'); };
+    img.src = dataUrl;
+  });
+}
+
+// opts: { aspect, tip, round, single }
+function pickImages(cb, opts) {
+  var o = opts || {};
   var inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'image/*';
-  inp.multiple = true;
+  if (!o.single) inp.multiple = true;
   inp.addEventListener('change', async function () {
     var out = [];
-    for (var i = 0; i < inp.files.length && i < 4; i++) {
-      out.push(await fileToDataUrl(inp.files[i]));
+    var max = o.single ? 1 : 4;
+    for (var i = 0; i < inp.files.length && i < max; i++) {
+      var url = await fileToDataUrl(inp.files[i]);
+      var cropped = await openCropper(url, o.aspect, o.tip, o.round);
+      if (cropped === null) continue;              // 이 사진만 건너뜀
+      out.push(cropped === 'full' ? url : cropped);
     }
     if (out.length) cb(out);
   });
@@ -1381,7 +1526,8 @@ document.addEventListener('click', async function (e) {
   if (act === 'rb-open') { RB_OPEN = true; drawReplyBar(); return; }
   if (act === 'rb-submit') { await submitReplyBar(); return; }
   if (act === 'rb-img') {
-    pickImages(function (arr) { RB_IMGS = RB_IMGS.concat(arr).slice(0, 4); drawReplyBar(); });
+    pickImages(function (arr) { RB_IMGS = RB_IMGS.concat(arr).slice(0, 4); drawReplyBar(); },
+      { tip: '테두리를 끌어 자를 영역을 정하세요.' });
     return;
   }
   if (act === 'rb-delimg') { RB_IMGS.splice(parseInt(el.dataset.idx, 10), 1); drawReplyBar(); return; }
@@ -1407,7 +1553,8 @@ document.addEventListener('click', async function (e) {
   if (act === 'e-del') { await deleteAccount(EDIT.id); return; }
   if (act === 'e-pic') {
     readEdit();
-    pickImages(function (arr) { EDIT.avatar = arr[0]; drawEditor(); });
+    pickImages(function (arr) { EDIT.avatar = arr[0]; drawEditor(); },
+      { aspect: 1, round: true, single: true, tip: '프로필 사진은 정사각형으로 잘립니다. 모서리를 끌어 크기를 맞추세요.' });
     return;
   }
   if (act === 'e-nopic') { readEdit(); EDIT.avatar = null; drawEditor(); return; }
@@ -1430,7 +1577,7 @@ document.addEventListener('click', async function (e) {
     pickImages(function (arr) {
       CBOX[bi].imgs = CBOX[bi].imgs.concat(arr).slice(0, 4);
       drawComposer(bi);
-    });
+    }, { tip: '테두리를 끌어 자를 영역을 정하세요.' });
     return;
   }
   if (act === 'c-delimg') {
