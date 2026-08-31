@@ -251,7 +251,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.1';
+var APP_VER = 'v1.2';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -559,7 +559,7 @@ function postRow(p, o) {
     '</div>' +
     '<div class="p-col-r">' +
       '<div class="p-head">' +
-        '<span class="p-name" data-act="user" data-id="' + u.id + '">' + esc(u.name) + '</span>' +
+        '<span class="p-name" data-act="user" data-id="' + u.id + '">' + esc(u.handle) + '</span>' +
         (o.detail ? '' : '<span class="p-time">' + rel(p.ts) + '</span>') +
         '<span class="p-sp"></span>' +
         '<button class="p-more" data-act="more" data-id="' + p.id + '">' + ic('more', 18) + '</button>' +
@@ -626,7 +626,7 @@ function viewPost(id) {
   appEl.insertAdjacentHTML('afterend',
     '<div class="replybar"><div class="replybar-in" data-act="reply" data-id="' + p.id + '">' +
       avatarHtml(ME, 'sm') +
-      '<span class="rb-text">' + esc(u.name) + '님에게 답글 남기기...</span>' +
+      '<span class="rb-text">' + esc(u.handle) + '님에게 답글 남기기...</span>' +
     '</div></div>');
 }
 function replyTree(p, depth, sep) {
@@ -645,7 +645,7 @@ function viewUser(id, isMeTab) {
   var u = UMAP[id];
   if (!u) { appEl.innerHTML = '<p class="empty">없는 계정입니다.</p>'; bar({ back: true, title: '프로필' }); return; }
   var isMe = ME && u.id === ME.id;
-  bar(isMeTab ? { title: '프로필' } : { back: true, title: esc(u.name) });
+  bar(isMeTab ? { title: '프로필' } : { back: true, title: esc(u.handle) });
 
   var mine = POSTS.filter(function (p) { return p.author_id === u.id; });
   var roots = mine.filter(function (p) { return p.parent_id == null; });
@@ -654,7 +654,7 @@ function viewUser(id, isMeTab) {
 
   var html = '<div class="prof"><div class="prof-top"><div class="prof-info">' +
     '<div class="prof-name">' + esc(u.name) + '</div>' +
-    '<div class="prof-handle">@' + esc(u.handle) +
+    '<div class="prof-handle">' + esc(u.handle) +
       (isMe ? '<button class="sw" data-act="switcher">계정 전환 ' + ic('right', 12) + '</button>' : '') +
     '</div></div>' + avatarHtml(u, 'lg') + '</div>' +
     (u.bio ? '<div class="prof-bio">' + esc(u.bio) + '</div>' : '') +
@@ -685,8 +685,8 @@ function viewSettings() {
   var dark = getTheme() === 'dark';
   var html = '<div class="sec-title">현재 계정</div>';
   html += '<button class="row" data-act="switcher">' + avatarHtml(ME) +
-    '<div class="row-main"><div class="row-t">' + esc(ME.name) + ' <span class="badge-me">사용 중</span></div>' +
-    '<div class="row-s">@' + esc(ME.handle) + '</div></div>' +
+    '<div class="row-main"><div class="row-t">' + esc(ME.handle) + ' <span class="badge-me">사용 중</span></div>' +
+    '<div class="row-s">' + esc(ME.name) + '</div></div>' +
     '<span class="row-r">전환 ' + '</span>' + ic('right', 15) + '</button>';
   html += '<button class="row" data-act="edit-me"><div class="row-main"><div class="row-t">프로필 편집</div>' +
     '<div class="row-s">이름 · 아이디 · 소개 · 사진</div></div>' + ic('right', 15) + '</button>';
@@ -694,9 +694,9 @@ function viewSettings() {
   html += '<div class="sec-title">등록된 계정 ' + USERS.length + '개</div>';
   USERS.forEach(function (u) {
     html += '<button class="row" data-act="edit-user" data-id="' + u.id + '">' + avatarHtml(u) +
-      '<div class="row-main"><div class="row-t">' + esc(u.name) +
+      '<div class="row-main"><div class="row-t">' + esc(u.handle) +
         (ME.id === u.id ? ' <span class="badge-me">사용 중</span>' : '') + '</div>' +
-      '<div class="row-s">@' + esc(u.handle) + '</div></div>' + ic('right', 15) + '</button>';
+      '<div class="row-s">' + esc(u.name) + '</div></div>' + ic('right', 15) + '</button>';
   });
   html += '<button class="row" data-act="add-user">' +
     '<div class="avatar" style="background:var(--bg2);color:var(--fg)">' + ic('plus', 18) + '</div>' +
@@ -821,7 +821,7 @@ function composerHtml() {
     return '<div class="cbox">' +
       '<div class="p-col-l">' + avatarHtml(ME) + (i < last ? '<div class="rail"></div>' : '') + '</div>' +
       '<div class="p-col-r">' +
-        '<div class="c-name">' + esc(ME.name) + '</div>' +
+        '<div class="c-name">' + esc(ME.handle) + '</div>' +
         '<textarea data-box="' + i + '" placeholder="' +
           (isReply ? '답글 남기기...' : (i === 0 ? '무슨 생각 하고 계신가요?' : '스레드에 추가...')) +
           '" rows="1">' + esc(b.text) + '</textarea>' +
@@ -921,7 +921,7 @@ function openMore(pid) {
     '<button class="row" data-act="open" data-id="' + pid + '"><div class="row-main">' +
       '<div class="row-t">스레드 열기</div></div></button>' +
     '<button class="row" data-act="user" data-id="' + u.id + '"><div class="row-main">' +
-      '<div class="row-t">@' + esc(u.handle) + ' 프로필</div></div></button>' +
+      '<div class="row-t">' + esc(u.handle) + ' 프로필</div></div></button>' +
     (mine ? '<button class="row danger" data-act="del-post" data-id="' + pid + '"><div class="row-main">' +
       '<div class="row-t">삭제</div></div></button>' : '') +
     '</div>', true);
@@ -944,8 +944,8 @@ async function deletePostDeep(pid) {
 function openSwitcher() {
   var rows = USERS.map(function (u) {
     return '<button class="row" data-act="switch" data-id="' + u.id + '">' + avatarHtml(u) +
-      '<div class="row-main"><div class="row-t">' + esc(u.name) + '</div>' +
-      '<div class="row-s">@' + esc(u.handle) + '</div></div>' +
+      '<div class="row-main"><div class="row-t">' + esc(u.handle) + '</div>' +
+      '<div class="row-s">' + esc(u.name) + '</div></div>' +
       (ME.id === u.id ? '<span class="row-r" style="color:var(--fg)">' + ic('check', 20) + '</span>' : '') +
       '</button>';
   }).join('');
@@ -960,7 +960,7 @@ async function switchTo(id) {
   setMeId(id);
   closeOvl();
   await render();
-  toast('@' + userById(id).handle + '(으)로 전환했습니다');
+  toast(userById(id).handle + '(으)로 전환했습니다');
 }
 
 // ===== 프로필 편집 / 계정 추가 =====
@@ -987,10 +987,10 @@ function drawEditor() {
           (EDIT.avatar ? '<button data-act="e-nopic">사진 지우기</button>' : '') +
           '<button data-act="e-color">색 바꾸기</button>' +
         '</div></div>' +
-      '<div class="field"><label>이름</label>' +
-        '<input id="e-name" value="' + esc(EDIT.name) + '" placeholder="표시될 이름" maxlength="20"></div>' +
-      '<div class="field"><label>아이디</label>' +
-        '<input id="e-handle" value="' + esc(EDIT.handle) + '" placeholder="영문·숫자·밑줄" maxlength="20"></div>' +
+      '<div class="field"><label>이름 — 프로필 상단에만 표시</label>' +
+        '<input id="e-name" value="' + esc(EDIT.name) + '" placeholder="김도윤" maxlength="20"></div>' +
+      '<div class="field"><label>아이디 — 글·답글에 표시되는 이름</label>' +
+        '<input id="e-handle" value="' + esc(EDIT.handle) + '" placeholder="doyoon.k" maxlength="20"></div>' +
       '<div class="field"><label>소개</label>' +
         '<textarea id="e-bio" placeholder="자기소개" maxlength="200">' + esc(EDIT.bio) + '</textarea></div>' +
       (canDel ? '<button class="row danger" style="margin-top:14px" data-act="e-del">' +
@@ -1031,12 +1031,12 @@ async function saveEdit() {
   closeOvl();
   EDIT = null;
   await render();
-  toast(obj.id ? '저장했습니다' : '@' + handle + ' 계정을 만들었습니다');
+  toast(obj.id ? '저장했습니다' : handle + ' 계정을 만들었습니다');
 }
 async function deleteAccount(id) {
   if (USERS.length <= 1) { toast('마지막 계정은 지울 수 없습니다'); return; }
   var u = userById(id);
-  if (!confirm('@' + u.handle + ' 계정과 이 계정이 쓴 스레드를 모두 삭제할까요?')) return;
+  if (!confirm(u.handle + ' 계정과 이 계정이 쓴 스레드를 모두 삭제할까요?')) return;
   var theirs = POSTS.filter(function (p) { return p.author_id === id; });
   for (var i = 0; i < theirs.length; i++) {
     await del('posts', theirs[i].id);
