@@ -58,7 +58,7 @@ svg { display: block; }
 .tabbar a.on { color: var(--fg); }
 .tabbar a:active { transform: scale(.9); }
 
-.page { padding-bottom: 90px; }
+.page { padding-bottom: 96px; }
 
 /* ===== 포스트 ===== */
 .post { display: flex; gap: 11px; padding: 14px 16px 10px; position: relative; }
@@ -244,13 +244,33 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 .avatar-pick .ap-btns button { font-size: 14px; color: var(--muted); text-align: left; padding: 4px 0; }
 
 .replybar {
-  position: fixed; bottom: 56px; left: 0; right: 0; z-index: 55; background: var(--bg);
-  border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 55; background: var(--bg);
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
 }
-.replybar-in {
-  max-width: 620px; margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+.replybar.open { border-top: 1px solid var(--line); }
+.replybar-in { max-width: 620px; margin: 0 auto; }
+.rb-ctx { padding: 4px 10px 9px; }
+.rb-ctx-1 { color: var(--muted); font-size: 14px; }
+.rb-ctx-2 {
+  color: var(--muted); font-size: 14px; margin-top: 3px; opacity: .75;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.replybar .rb-text { flex: 1; color: var(--muted); font-size: 15px; }
+.rb-pill {
+  display: flex; align-items: center; gap: 10px; width: 100%; background: var(--bg2);
+  border-radius: 24px; padding: 9px 14px; text-align: left;
+}
+.rb-pill.open { align-items: flex-end; padding: 8px 14px; }
+.rb-ph { flex: 1; color: var(--muted); font-size: 15px; }
+.rb-ic { color: var(--muted); flex-shrink: 0; }
+.rb-ta {
+  flex: 1; min-width: 0; border: none; outline: none; background: none;
+  font-size: 16px; line-height: 1.4; max-height: 118px; overflow-y: auto; padding: 4px 0;
+}
+.rb-post { font-weight: 700; font-size: 14px; flex-shrink: 0; padding: 4px 0 5px; }
+.rb-post[disabled] { color: var(--muted); font-weight: 400; }
+.rb-thumbs { display: flex; gap: 8px; padding: 0 10px 9px; overflow-x: auto; scrollbar-width: none; }
+.rb-thumbs::-webkit-scrollbar { display: none; }
+.rb-thumbs .c-thumb img { height: 84px; }
 
 .imgview { position: fixed; inset: 0; background: #000; z-index: 300; display: flex; align-items: center; justify-content: center; }
 .imgview img { max-width: 100%; max-height: 100%; }
@@ -272,7 +292,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.4';
+var APP_VER = 'v1.5';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -287,6 +307,12 @@ var KIDS = {};          // parent_id -> [post]
 var LIKE_CNT = {};      // post_id -> count
 var MY_LIKE = {};       // post_id -> true (현재 계정 기준)
 var PROF_TAB = 'posts'; // 프로필 탭 상태
+// 인라인 답글 바 상태
+var RB_KEY = '';        // 어느 스레드의 바인지
+var RB_TARGET = null;   // 답글을 달 대상 글 id
+var RB_OPEN = false;
+var RB_TEXT = '';
+var RB_IMGS = [];
 
 var appEl = document.getElementById('app');
 var barEl = document.getElementById('appbar');
@@ -619,7 +645,6 @@ function viewPost(id) {
   var p = POSTS.filter(function (x) { return x.id === id; })[0];
   if (!p) { appEl.innerHTML = '<p class="empty">삭제되었거나 없는 스레드입니다.</p>'; bar({ back: true, title: '스레드' }); return; }
   bar({ back: true, title: '스레드' });
-  var u = userById(p.author_id);
   var anc = ancestorsOf(p);
   var html = '';
   anc.forEach(function (a) { html += postRow(a, { rail: true }); });
@@ -643,11 +668,101 @@ function viewPost(id) {
     html += kids.map(function (k, i) { return replyTree(k, 0, i > 0); }).join('');
   }
   appEl.innerHTML = html;
-  appEl.insertAdjacentHTML('afterend',
-    '<div class="replybar"><div class="replybar-in" data-act="reply" data-id="' + p.id + '">' +
-      avatarHtml(ME, 'sm') +
-      '<span class="rb-text">' + esc(u.handle) + '님에게 답글 남기기...</span>' +
-    '</div></div>');
+  // 이 스레드를 처음 열었을 때만 답글 바 상태를 초기화한다
+  var key = 'p' + p.id;
+  if (RB_KEY !== key) {
+    RB_KEY = key; RB_TARGET = p.id; RB_OPEN = false; RB_TEXT = ''; RB_IMGS = [];
+  }
+  if (!RB_TARGET) RB_TARGET = p.id;
+  drawReplyBar();
+}
+
+// 키보드가 올라오면 그 위에 붙인다
+function syncReplyBar() {
+  var bar = document.querySelector('.replybar');
+  if (!bar) return;
+  var vv = window.visualViewport;
+  if (!vv) return;
+  var lift = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  bar.style.transform = lift ? 'translateY(-' + lift + 'px)' : '';
+}
+function rbGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 118) + 'px';
+}
+function drawReplyBar() {
+  var old = document.querySelector('.replybar');
+  if (old) old.remove();
+  if (!RB_TARGET) return;
+  var t = POSTS.filter(function (x) { return x.id === RB_TARGET; })[0];
+  if (!t) return;
+  var tu = userById(t.author_id);
+  var can = !!(RB_TEXT.trim() || RB_IMGS.length);
+  var inner;
+  if (!RB_OPEN) {
+    inner = '<button class="rb-pill" data-act="rb-open">' + avatarHtml(ME, 'sm') +
+      '<span class="rb-ph">답글 달기...</span>' +
+      '<span class="rb-ic">' + ic('image', 21) + '</span></button>';
+  } else {
+    inner =
+      '<div class="rb-ctx">' +
+        '<div class="rb-ctx-1">' + esc(tu.handle) + '님에게 답글 남기는 중</div>' +
+        (t.text ? '<div class="rb-ctx-2">' + esc(t.text.replace(/\s+/g, ' ').slice(0, 70)) + '</div>' : '') +
+      '</div>' +
+      (RB_IMGS.length ? '<div class="rb-thumbs">' + RB_IMGS.map(function (src, i) {
+        return '<div class="c-thumb"><img src="' + src + '" alt="">' +
+          '<button data-act="rb-delimg" data-idx="' + i + '">✕</button></div>';
+      }).join('') + '</div>' : '') +
+      '<div class="rb-pill open">' +
+        '<textarea class="rb-ta" id="rb-ta" rows="1" placeholder="답글 달기..."></textarea>' +
+        '<button class="rb-ic" data-act="rb-img">' + ic('image', 21) + '</button>' +
+        '<button class="rb-post" data-act="rb-submit"' + (can ? '' : ' disabled') + '>게시</button>' +
+      '</div>';
+  }
+  var bar = document.createElement('div');
+  bar.className = 'replybar' + (RB_OPEN ? ' open' : '');
+  bar.innerHTML = '<div class="replybar-in">' + inner + '</div>';
+  document.body.appendChild(bar);
+  syncReplyBar();
+  if (!RB_OPEN) return;
+
+  var ta = bar.querySelector('#rb-ta');
+  ta.value = RB_TEXT;
+  ta.addEventListener('input', function () {
+    RB_TEXT = ta.value;
+    rbGrow(ta);
+    var btn = bar.querySelector('.rb-post');
+    if (RB_TEXT.trim() || RB_IMGS.length) btn.removeAttribute('disabled');
+    else btn.setAttribute('disabled', '');
+    syncReplyBar();
+  });
+  // 내용 없이 키보드를 내리면 알아서 접힌다
+  ta.addEventListener('blur', function () {
+    setTimeout(function () {
+      if (!RB_OPEN) return;
+      var bar2 = document.querySelector('.replybar');
+      if (bar2 && bar2.contains(document.activeElement)) return;
+      if (RB_TEXT.trim() || RB_IMGS.length) return;
+      RB_OPEN = false;
+      drawReplyBar();
+    }, 220);
+  });
+  ta.focus({ preventScroll: true });
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  rbGrow(ta);
+  setTimeout(syncReplyBar, 80);
+}
+async function submitReplyBar() {
+  if (!(RB_TEXT.trim() || RB_IMGS.length) || !RB_TARGET) return;
+  await put('posts', {
+    author_id: ME.id, text: RB_TEXT.trim(), imgs: RB_IMGS.slice(),
+    parent_id: RB_TARGET, chain_of: null, topic: null, ts: Date.now()
+  });
+  RB_TEXT = ''; RB_IMGS = []; RB_OPEN = false;
+  var back = window.scrollY;
+  await render();
+  window.scrollTo(0, back);
+  toast('답글을 남겼습니다');
 }
 function replyTree(p, depth, sep) {
   var kids = childrenOf(p.id, false);
@@ -776,6 +891,8 @@ async function render() {
   var rb = document.querySelector('.replybar');
   if (rb) rb.remove();
   renderChrome();
+  document.querySelector('.tabbar').style.display = h.route === 'post' ? 'none' : '';
+  if (h.route !== 'post') { RB_KEY = ''; RB_TARGET = null; RB_OPEN = false; RB_TEXT = ''; RB_IMGS = []; }
   if (h.route === 'post') viewPost(h.id);
   else if (h.route === 'user') viewUser(h.id, false);
   else if (h.route === 'me') viewUser(ME.id, true);
@@ -812,8 +929,8 @@ function syncOvl() {
   ov.style.top = vv.offsetTop + 'px';
 }
 if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', syncOvl);
-  window.visualViewport.addEventListener('scroll', syncOvl);
+  window.visualViewport.addEventListener('resize', function () { syncOvl(); syncReplyBar(); });
+  window.visualViewport.addEventListener('scroll', function () { syncOvl(); syncReplyBar(); });
 }
 function closeOvl() {
   var o = document.querySelector('.ovl');
@@ -1228,7 +1345,23 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (act === 'like') { e.stopPropagation(); await toggleLike(id); return; }
-  if (act === 'reply') { e.stopPropagation(); openComposer(id); return; }
+  if (act === 'reply') {
+    e.stopPropagation();
+    // 스레드 안에서는 별도 창 없이 아래 답글 바로 바로 단다
+    if (parseHash().route === 'post') {
+      if (RB_TARGET !== id) { RB_TEXT = ''; RB_IMGS = []; }
+      RB_TARGET = id; RB_OPEN = true;
+      drawReplyBar();
+    } else openComposer(id);
+    return;
+  }
+  if (act === 'rb-open') { RB_OPEN = true; drawReplyBar(); return; }
+  if (act === 'rb-submit') { await submitReplyBar(); return; }
+  if (act === 'rb-img') {
+    pickImages(function (arr) { RB_IMGS = RB_IMGS.concat(arr).slice(0, 4); drawReplyBar(); });
+    return;
+  }
+  if (act === 'rb-delimg') { RB_IMGS.splice(parseInt(el.dataset.idx, 10), 1); drawReplyBar(); return; }
   if (act === 'more') { e.stopPropagation(); openMore(id); return; }
   if (act === 'compose') { openComposer(null); return; }
   if (act === 'del-post') {
@@ -1298,7 +1431,13 @@ function openImg(src) {
 }
 
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') { closeOvl(); var iv = document.querySelector('.imgview'); if (iv) iv.remove(); }
+  if (e.key === 'Escape') {
+    closeOvl();
+    var iv = document.querySelector('.imgview');
+    if (iv) iv.remove();
+    if (RB_OPEN) { RB_OPEN = false; drawReplyBar(); }
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && RB_OPEN) { submitReplyBar(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && document.querySelector('[data-act="c-submit"]')) {
     submitComposer();
   }
