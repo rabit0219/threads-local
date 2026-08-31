@@ -159,10 +159,15 @@ svg { display: block; }
 .sw-toggle.on i { left: 22px; }
 
 /* ===== 모달 / 시트 ===== */
-.ovl { position: fixed; inset: 0; background: var(--ovl); z-index: 200; display: flex; }
+.ovl {
+  position: fixed; left: 0; top: 0; width: 100%; height: 100vh; height: 100dvh;
+  background: var(--ovl); z-index: 200; display: flex;
+}
+body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .sheet {
   background: var(--sheet); width: 100%; max-width: 620px; margin: auto auto 0; border-radius: 18px 18px 0 0;
-  padding-bottom: env(safe-area-inset-bottom); animation: up .18s ease-out; max-height: 86vh; overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom); animation: up .18s ease-out; max-height: 86vh;
+  overflow-y: auto; overscroll-behavior: contain;
 }
 @keyframes up { from { transform: translateY(100%); } }
 .sheet-h { text-align: center; padding: 10px 16px 12px; font-size: 16px; font-weight: 700; }
@@ -181,7 +186,7 @@ svg { display: block; }
 .modal-h .m-c, .modal-h .m-d { font-size: 15px; min-width: 52px; }
 .modal-h .m-d { text-align: right; font-weight: 700; }
 .modal-h .m-d[disabled] { color: var(--muted); font-weight: 400; }
-.modal-b { flex: 1; overflow-y: auto; padding-bottom: 24px; }
+.modal-b { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 24px; }
 
 .cbox { display: flex; gap: 11px; padding: 14px 16px 0; }
 .cbox textarea {
@@ -246,7 +251,7 @@ svg { display: block; }
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1';
+var APP_VER = 'v1.1';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -748,9 +753,36 @@ function rerender() { return render(); }
 // =====================================================================
 // 동작
 // =====================================================================
+var _lockY = 0;
+function lockScroll() {
+  if (document.body.classList.contains('locked')) return;
+  _lockY = window.scrollY || window.pageYOffset || 0;
+  document.body.style.top = -_lockY + 'px';
+  document.body.classList.add('locked');
+}
+function unlockScroll() {
+  if (!document.body.classList.contains('locked')) return;
+  document.body.classList.remove('locked');
+  document.body.style.top = '';
+  window.scrollTo(0, _lockY);
+}
+// 모바일 키보드가 올라오면 보이는 영역이 줄어든다. 그 높이에 오버레이를 맞춘다.
+function syncOvl() {
+  var ov = document.querySelector('.ovl');
+  if (!ov) return;
+  var vv = window.visualViewport;
+  if (!vv) return;
+  ov.style.height = vv.height + 'px';
+  ov.style.top = vv.offsetTop + 'px';
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncOvl);
+  window.visualViewport.addEventListener('scroll', syncOvl);
+}
 function closeOvl() {
   var o = document.querySelector('.ovl');
   if (o) o.remove();
+  unlockScroll();
 }
 function openOvl(inner, isSheet) {
   closeOvl();
@@ -760,7 +792,9 @@ function openOvl(inner, isSheet) {
   ov.addEventListener('click', function (e) {
     if (e.target === ov && isSheet) closeOvl();
   });
+  lockScroll();
   document.body.appendChild(ov);
+  syncOvl();
   return ov;
 }
 function autoGrow(el) {
@@ -841,8 +875,9 @@ function drawComposer(focusBox) {
   });
   var idx = focusBox == null ? 0 : focusBox;
   if (tas[idx]) {
-    tas[idx].focus();
+    tas[idx].focus({ preventScroll: true });
     tas[idx].setSelectionRange(tas[idx].value.length, tas[idx].value.length);
+    setTimeout(syncOvl, 60);
   }
 }
 function openComposer(replyTo) {
