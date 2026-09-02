@@ -280,6 +280,9 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
   font-weight: 600; white-space: nowrap; animation: up .15s ease-out;
 }
 
+/* 꾹 누르기 대상: iOS 복사/공유 팝업과 텍스트 선택을 막는다 */
+[data-long] { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+
 /* ===== 사진 크롭 ===== */
 .crop-ov {
   position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,.96);
@@ -341,7 +344,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.7';
+var APP_VER = 'v1.8';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -679,6 +682,10 @@ async function loadData() {
     if (ME && l.user_id === ME.id) MY_LIKE[l.post_id] = true;
   });
 }
+// 표시 개수 = 실제 좋아요 + 수동 가산치(likes_pad). 내 하트 상태는 실제 값 그대로 유지된다.
+function likeCount(p) {
+  return Math.max(0, (LIKE_CNT[p.id] || 0) + (p.likes_pad || 0));
+}
 function childrenOf(id, includeChain) {
   var a = KIDS[id] || [];
   return includeChain ? a.slice() : a.filter(function (p) { return !p.chain_of; });
@@ -738,7 +745,7 @@ function postRow(p, o) {
   o = o || {};
   var u = userById(p.author_id);
   var liked = !!MY_LIKE[p.id];
-  var lc = LIKE_CNT[p.id] || 0;
+  var lc = likeCount(p);
   var rc = replyCount(p.id);
   var cls = 'post' + (o.sep ? ' sep' : '') + (o.detail ? ' detail' : '') + (o.detail ? '' : ' clickable');
   var attrs = o.detail ? '' : ' data-act="open" data-id="' + p.id + '"';
@@ -751,7 +758,7 @@ function postRow(p, o) {
   }
   var acts =
     '<div class="p-acts">' +
-      '<button class="p-act' + (liked ? ' liked' : '') + '" data-act="like" data-id="' + p.id + '">' +
+      '<button class="p-act' + (liked ? ' liked' : '') + '" data-act="like" data-long="like" data-id="' + p.id + '">' +
         (liked ? icHeartFill(21) : ic('heart', 21)) +
         (lc ? '<span class="cnt">' + lc + '</span>' : '') +
       '</button>' +
@@ -762,12 +769,12 @@ function postRow(p, o) {
 
   return '<div class="' + cls + '"' + attrs + '>' +
     '<div class="p-col-l">' +
-      '<div data-act="user" data-id="' + u.id + '">' + avatarHtml(u) + '</div>' +
+      '<div data-act="user" data-long="user" data-id="' + u.id + '">' + avatarHtml(u) + '</div>' +
       (o.rail ? '<div class="rail"></div>' : '') +
     '</div>' +
     '<div class="p-col-r">' +
       '<div class="p-head">' +
-        '<span class="p-name" data-act="user" data-id="' + u.id + '">' + esc(u.handle) + '</span>' +
+        '<span class="p-name" data-act="user" data-long="user" data-id="' + u.id + '">' + esc(u.handle) + '</span>' +
         (p.topic ? '<span class="p-topic" data-act="topic" data-topic="' + esc(p.topic) + '">' +
           '<span class="chev">›</span>' + esc(p.topic) + '</span>' : '') +
         (o.detail ? '' : '<span class="p-time">' + rel(p.ts) + '</span>') +
@@ -814,7 +821,7 @@ function viewPost(id) {
   anc.forEach(function (a) { html += postRow(a, { rail: true }); });
   html += postRow(p, { detail: true, sep: anc.length > 0 });
   html += '<div class="detail-stats">' + fullTime(p.ts) +
-    ' · 좋아요 ' + (LIKE_CNT[p.id] || 0) + '개 · 답글 ' + replyCount(p.id) + '개</div>';
+    ' · 좋아요 ' + likeCount(p) + '개 · 답글 ' + replyCount(p.id) + '개</div>';
 
   // 체인 뒷부분
   var tail = chainOf(p.id);
@@ -864,7 +871,8 @@ function drawReplyBar() {
   var can = !!(RB_TEXT.trim() || RB_IMGS.length);
   var inner;
   if (!RB_OPEN) {
-    inner = '<button class="rb-pill" data-act="rb-open">' + avatarHtml(ME, 'sm') +
+    inner = '<button class="rb-pill" data-act="rb-open">' +
+      '<span data-long="me">' + avatarHtml(ME, 'sm') + '</span>' +
       '<span class="rb-ph">답글 달기...</span>' +
       '<span class="rb-ic">' + ic('image', 21) + '</span></button>';
   } else {
@@ -878,6 +886,7 @@ function drawReplyBar() {
           '<button data-act="rb-delimg" data-idx="' + i + '">✕</button></div>';
       }).join('') + '</div>' : '') +
       '<div class="rb-pill open">' +
+        '<span data-long="me">' + avatarHtml(ME, 'sm') + '</span>' +
         '<textarea class="rb-ta" id="rb-ta" rows="1" placeholder="답글 달기..."></textarea>' +
         '<button class="rb-ic" data-act="rb-img">' + ic('image', 21) + '</button>' +
         '<button class="rb-post" data-act="rb-submit"' + (can ? '' : ' disabled') + '>게시</button>' +
@@ -958,7 +967,7 @@ function viewUser(id, isMeTab) {
     '</div></div>' + avatarHtml(u, 'lg') + '</div>' +
     (u.bio ? '<div class="prof-bio">' + esc(u.bio) + '</div>' : '') +
     '<div class="prof-cnt">스레드 ' + total + '개 · 받은 좋아요 ' +
-      mine.reduce(function (s, p) { return s + (LIKE_CNT[p.id] || 0); }, 0) + '개</div>' +
+      mine.reduce(function (s, p) { return s + likeCount(p); }, 0) + '개</div>' +
     (isMe ? '<div class="prof-btns">' +
       '<button class="btn-o" data-act="edit-me">프로필 편집</button>' +
       '<button class="btn-o" data-act="switcher">계정 전환</button></div>' : '') +
@@ -1026,6 +1035,15 @@ function viewSettings() {
     '<div class="row-s">현재 데이터를 덮어씁니다</div></div>' + ic('right', 15) + '</button>';
   html += '<button class="row danger" data-act="wipe"><div class="row-main"><div class="row-t">전체 초기화</div>' +
     '<div class="row-s">모든 계정과 스레드를 지우고 처음 상태로</div></div></button>';
+  html += '<div class="sec-title">숨은 기능</div>';
+  html += '<div class="row" style="align-items:flex-start"><div class="row-main">' +
+    '<div class="row-t">하트를 꾹 누르면</div>' +
+    '<div class="row-s" style="white-space:normal">좋아요 개수를 원하는 숫자로 맞출 수 있습니다</div></div></div>';
+  html += '<div class="row" style="align-items:flex-start"><div class="row-main">' +
+    '<div class="row-t">아이디를 꾹 누르면</div>' +
+    '<div class="row-s" style="white-space:normal">그 계정으로 바로 전환됩니다. ' +
+    '작성·답글 화면에서 내 아바타를 꾹 누르면 계정 목록이 열립니다</div></div></div>';
+
   html += '<p class="empty" style="padding:28px 20px 20px;font-size:13px">로컬 쓰레드 ' + APP_VER +
     '<br>이 기기의 브라우저에만 저장됩니다.</p>';
   appEl.innerHTML = html;
@@ -1150,7 +1168,7 @@ function composerHtml() {
     return '<div class="cbox">' +
       '<div class="p-col-l">' + avatarHtml(ME) + (i < last ? '<div class="rail"></div>' : '') + '</div>' +
       '<div class="p-col-r">' +
-        '<div class="c-name">' + esc(ME.handle) +
+        '<div class="c-name"><span data-long="me">' + esc(ME.handle) + '</span>' +
           (!isReply && i === 0 ? '<span class="chev">›</span>' +
             '<input class="c-topic" id="c-topic" value="' + esc(CTOPIC) + '" list="topic-list" ' +
             'placeholder="커뮤니티 또는 주제" maxlength="30" autocomplete="off">' +
@@ -1587,11 +1605,103 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (act === 'theme') { applyTheme(getTheme() === 'dark' ? 'light' : 'dark'); await render(); return; }
+  if (act === 'lk-save') { await saveLikeCount(false); return; }
+  if (act === 'lk-reset') { await saveLikeCount(true); return; }
   if (act === 'passwd') { await changePassword(); return; }
   if (act === 'export') { await exportData(); return; }
   if (act === 'import') { importData(); return; }
   if (act === 'wipe') { await wipeAll(); return; }
 });
+
+// ===== 꾹 누르기 =====
+// 스크롤과 헷갈리지 않게 10px 이상 움직이면 취소하고, 발동하면 뒤따르는 클릭 한 번을 삼킨다.
+var LP_TIMER = null, LP_FROM = null, LP_EL = null, LP_FIRED = false;
+function lpCancel() { clearTimeout(LP_TIMER); LP_TIMER = null; LP_FROM = null; LP_EL = null; }
+function lpFire(el) {
+  var kind = el.dataset.long;
+  var id = el.dataset.id ? parseInt(el.dataset.id, 10) : null;
+  if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
+  if (kind === 'like') openLikeSheet(id);
+  else if (kind === 'me') openSwitcher();
+  else if (kind === 'user') {
+    if (!UMAP[id]) return;                 // 지워진 계정이면 반응 없음
+    if (ME && id === ME.id) openSwitcher(); // 이미 나면 목록을 연다
+    else switchTo(id);                      // 내가 등록한 계정이면 바로 전환
+  }
+}
+document.addEventListener('pointerdown', function (e) {
+  var el = e.target.closest && e.target.closest('[data-long]');
+  LP_FIRED = false;
+  if (!el) return;
+  LP_EL = el;
+  LP_FROM = { x: e.clientX, y: e.clientY };
+  clearTimeout(LP_TIMER);
+  LP_TIMER = setTimeout(function () {
+    LP_TIMER = null;
+    LP_FIRED = true;
+    var target = LP_EL;
+    lpCancel();
+    if (target) lpFire(target);
+  }, 500);
+}, true);
+document.addEventListener('pointermove', function (e) {
+  if (!LP_TIMER || !LP_FROM) return;
+  if (Math.abs(e.clientX - LP_FROM.x) > 10 || Math.abs(e.clientY - LP_FROM.y) > 10) lpCancel();
+}, true);
+document.addEventListener('pointerup', lpCancel, true);
+document.addEventListener('pointercancel', lpCancel, true);
+// 꾹 눌러 뜬 시트 위로 클릭이 흘러들어가지 않게 막는다
+document.addEventListener('click', function (e) {
+  if (!LP_FIRED) return;
+  LP_FIRED = false;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+// 데스크톱에서는 우클릭으로도 동일하게
+document.addEventListener('contextmenu', function (e) {
+  var el = e.target.closest && e.target.closest('[data-long]');
+  if (!el) return;
+  e.preventDefault();
+  lpFire(el);
+});
+
+// ===== 좋아요 개수 직접 지정 =====
+var LK_PID = null;
+function openLikeSheet(pid) {
+  var post = POSTS.filter(function (x) { return x.id === pid; })[0];
+  if (!post) return;
+  LK_PID = pid;
+  var real = LIKE_CNT[pid] || 0;
+  openOvl('<div class="sheet"><div class="sheet-grab"></div>' +
+    '<div class="sheet-h">좋아요 개수</div>' +
+    '<div class="field"><label>표시할 개수 — 실제로 누른 사람은 ' + real + '명</label>' +
+      '<input id="lk-n" type="number" inputmode="numeric" min="0" max="9999999" value="' + likeCount(post) + '"></div>' +
+    '<button class="btn-fill" data-act="lk-save">확인</button>' +
+    (post.likes_pad ? '<button class="row" data-act="lk-reset"><div class="row-main">' +
+      '<div class="row-t">실제 개수(' + real + ')로 되돌리기</div></div></button>' : '') +
+    '</div>', true);
+  setTimeout(function () {
+    var i = document.getElementById('lk-n');
+    if (i) { i.focus(); i.select(); }
+  }, 60);
+}
+async function saveLikeCount(reset) {
+  var post = POSTS.filter(function (x) { return x.id === LK_PID; })[0];
+  if (!post) { closeOvl(); return; }
+  var real = LIKE_CNT[post.id] || 0;
+  if (reset) {
+    post.likes_pad = 0;
+  } else {
+    var el = document.getElementById('lk-n');
+    var v = parseInt(el ? el.value : '', 10);
+    if (isNaN(v) || v < 0) { toast('0 이상의 숫자를 입력해주세요'); return; }
+    post.likes_pad = v - real;
+  }
+  await put('posts', post);
+  closeOvl();
+  await render();
+  toast(reset ? '실제 개수로 되돌렸습니다' : '좋아요를 ' + likeCount(post) + '개로 맞췄습니다');
+}
 
 function openImg(src) {
   var v = document.createElement('div');
