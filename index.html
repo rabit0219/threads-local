@@ -115,7 +115,19 @@ svg { display: block; }
   padding: 8px 16px 14px; color: var(--muted); font-size: 14px;
 }
 .reply-head { padding: 14px 16px 2px; font-size: 15px; font-weight: 600; border-top: 1px solid var(--line); }
-.rt-indent { padding-left: 22px; border-left: 2px solid var(--line); margin-left: 33px; }
+/* 답글 트리 연결선: 부모 아바타 중심에서 내려와 자식 아바타로 꺾여 들어간다 */
+.rt-node { position: relative; padding-left: 38px; }
+.rt-node::before {
+  content: ''; position: absolute; left: 34px; top: 0; width: 20px; height: 33px;
+  border-left: 2px solid var(--line2);
+  border-bottom: 2px solid var(--line2);
+  border-bottom-left-radius: 12px;
+}
+/* 형제 답글이 더 있으면 꺾인 지점 아래로 선을 이어 내린다 */
+.rt-node:not(:last-child)::after {
+  content: ''; position: absolute; left: 34px; top: 33px; bottom: 0; width: 2px;
+  background: var(--line2);
+}
 
 .empty { text-align: center; color: var(--muted); padding: 64px 24px; font-size: 15px; line-height: 1.6; }
 
@@ -372,7 +384,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.10';
+var APP_VER = 'v1.11';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -969,9 +981,15 @@ function replyTree(p, depth, sep) {
   var kids = childrenOf(p.id, false);
   var html = postRow(p, { sep: sep, rail: kids.length > 0 });
   if (kids.length) {
-    // 3단계부터는 더 들여쓰지 않는다 (모바일 폭 보호)
-    var inner = kids.map(function (k) { return replyTree(k, depth + 1, false); }).join('');
-    html += depth < 2 ? '<div class="rt-indent">' + inner + '</div>' : inner;
+    if (depth < 3) {
+      // 자식마다 .rt-node로 감싸야 '마지막 형제' 판별이 되고 선이 정확히 끊긴다
+      html += kids.map(function (k) {
+        return '<div class="rt-node">' + replyTree(k, depth + 1, false) + '</div>';
+      }).join('');
+    } else {
+      // 4단계부터는 더 들여쓰지 않는다 (모바일 폭 보호)
+      html += kids.map(function (k) { return replyTree(k, depth + 1, false); }).join('');
+    }
   }
   return html;
 }
