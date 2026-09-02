@@ -280,6 +280,31 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
   font-weight: 600; white-space: nowrap; animation: up .15s ease-out;
 }
 
+/* ===== 계정 관리 ===== */
+.acc-tools { padding: 12px 16px 4px; }
+.acc-search {
+  width: 100%; background: var(--bg2); border: 1px solid var(--line); border-radius: 22px;
+  padding: 11px 16px; font-size: 16px; outline: none;
+}
+.acc-search:focus { border-color: var(--line2); }
+.chips { display: flex; gap: 7px; padding: 11px 16px 12px; overflow-x: auto; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex-shrink: 0; border: 1px solid var(--line2); border-radius: 18px; padding: 7px 14px;
+  font-size: 13px; color: var(--muted); white-space: nowrap;
+}
+.chip.on { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 700; }
+.acc-count { padding: 12px 16px 6px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+.acc-more {
+  display: block; width: calc(100% - 32px); margin: 14px 16px 24px; border: 1px solid var(--line2);
+  border-radius: 12px; padding: 12px 0; font-size: 14px; font-weight: 600; text-align: center;
+}
+.gen-presets { display: flex; gap: 8px; padding: 0 16px 4px; }
+.gen-presets button {
+  flex: 1; border: 1px solid var(--line2); border-radius: 10px; padding: 10px 0;
+  font-size: 14px; font-weight: 600;
+}
+
 /* 꾹 누르기 대상: iOS 복사/공유 팝업과 텍스트 선택을 막는다 */
 [data-long] { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 
@@ -344,7 +369,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.8';
+var APP_VER = 'v1.9';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -997,6 +1022,91 @@ function viewTopic(name) {
     listHtml(roots, esc(name) + ' 주제로 쓴 글이 아직 없습니다.');
 }
 
+// ===== 계정 관리 =====
+var ACC_Q = '', ACC_SORT = 'new', ACC_LIMIT = 100;
+var ACC_SORTS = [
+  { k: 'new', t: '최근 추가순' }, { k: 'old', t: '오래된순' },
+  { k: 'handle', t: '아이디순' }, { k: 'name', t: '이름순' }, { k: 'posts', t: '글 많은 순' }
+];
+function accFiltered() {
+  var q = ACC_Q.trim().toLowerCase();
+  var list = USERS.filter(function (u) {
+    if (!q) return true;
+    return u.handle.toLowerCase().indexOf(q) >= 0 || (u.name || '').toLowerCase().indexOf(q) >= 0;
+  });
+  var cnt = {};
+  if (ACC_SORT === 'posts') {
+    POSTS.forEach(function (p) { cnt[p.author_id] = (cnt[p.author_id] || 0) + 1; });
+  }
+  list.sort(function (a, b) {
+    if (ACC_SORT === 'new') return b.id - a.id;
+    if (ACC_SORT === 'old') return a.id - b.id;
+    if (ACC_SORT === 'handle') return a.handle.localeCompare(b.handle);
+    if (ACC_SORT === 'name') return (a.name || '').localeCompare(b.name || '', 'ko');
+    return (cnt[b.id] || 0) - (cnt[a.id] || 0) || b.id - a.id;
+  });
+  return list;
+}
+function accRow(u) {
+  var n = POSTS.filter(function (p) { return p.author_id === u.id && !p.chain_of; }).length;
+  return '<button class="row" data-act="edit-user" data-long="user" data-id="' + u.id + '">' +
+    avatarHtml(u) +
+    '<div class="row-main"><div class="row-t">' + esc(u.handle) +
+      (ME.id === u.id ? ' <span class="badge-me">사용 중</span>' : '') + '</div>' +
+    '<div class="row-s">' + esc(u.name || '—') + (n ? ' · 스레드 ' + n + '개' : '') + '</div></div>' +
+    ic('right', 15) + '</button>';
+}
+// 검색창이 포커스를 잃지 않도록 목록만 갈아끼운다
+function drawAccList() {
+  var box = document.getElementById('acc-list');
+  if (!box) return;
+  var list = accFiltered();
+  var shown = list.slice(0, ACC_LIMIT);
+  var head = '<div class="acc-count">' +
+    (ACC_Q.trim() ? '검색 결과 ' + list.length + '개' : '전체 ' + USERS.length + '개') +
+    (list.length > shown.length ? ' 중 ' + shown.length + '개 표시' : '') + '</div>';
+  var body = shown.length
+    ? shown.map(accRow).join('')
+    : '<p class="empty">조건에 맞는 계정이 없습니다.</p>';
+  var more = list.length > shown.length
+    ? '<button class="acc-more" data-act="acc-more">더 보기 (' + (list.length - shown.length) + '개 남음)</button>'
+    : '';
+  box.innerHTML = head + body + more;
+  var chips = document.querySelectorAll('.chip[data-sort]');
+  chips.forEach(function (c) { c.classList.toggle('on', c.dataset.sort === ACC_SORT); });
+}
+function viewAccounts() {
+  bar({ back: true, title: '계정 관리' });
+  var genCount = USERS.filter(function (u) { return u.gen; }).length;
+  appEl.innerHTML =
+    '<div class="acc-tools">' +
+      '<input class="acc-search" id="acc-q" placeholder="아이디 · 이름 검색" autocomplete="off" value="' + esc(ACC_Q) + '">' +
+    '</div>' +
+    '<div class="chips">' + ACC_SORTS.map(function (o) {
+      return '<button class="chip' + (ACC_SORT === o.k ? ' on' : '') + '" data-act="acc-sort" data-sort="' +
+        o.k + '">' + o.t + '</button>';
+    }).join('') + '</div>' +
+    '<button class="row" data-act="add-user">' +
+      '<div class="avatar" style="background:var(--bg2);color:var(--fg)">' + ic('plus', 18) + '</div>' +
+      '<div class="row-main"><div class="row-t">계정 추가</div>' +
+      '<div class="row-s">직접 만들기</div></div>' + ic('right', 15) + '</button>' +
+    '<button class="row" data-act="gen-open">' +
+      '<div class="avatar" style="background:var(--bg2);color:var(--fg)">🎲</div>' +
+      '<div class="row-main"><div class="row-t">랜덤 계정 생성</div>' +
+      '<div class="row-s">그럴싸한 아이디·이름으로 원하는 개수만큼</div></div>' + ic('right', 15) + '</button>' +
+    (genCount ? '<button class="row danger" data-act="gen-del"><div class="row-main">' +
+      '<div class="row-t">랜덤 생성 계정 모두 삭제</div>' +
+      '<div class="row-s">' + genCount + '개 · 그 계정들이 쓴 스레드도 함께</div></div></button>' : '') +
+    '<div id="acc-list"></div>';
+  drawAccList();
+  var q = document.getElementById('acc-q');
+  q.addEventListener('input', function () {
+    ACC_Q = q.value;
+    ACC_LIMIT = 100;
+    drawAccList();
+  });
+}
+
 // ===== 설정 =====
 function viewSettings() {
   bar({ title: '설정' });
@@ -1009,16 +1119,9 @@ function viewSettings() {
   html += '<button class="row" data-act="edit-me"><div class="row-main"><div class="row-t">프로필 편집</div>' +
     '<div class="row-s">이름 · 아이디 · 소개 · 사진</div></div>' + ic('right', 15) + '</button>';
 
-  html += '<div class="sec-title">등록된 계정 ' + USERS.length + '개</div>';
-  USERS.forEach(function (u) {
-    html += '<button class="row" data-act="edit-user" data-id="' + u.id + '">' + avatarHtml(u) +
-      '<div class="row-main"><div class="row-t">' + esc(u.handle) +
-        (ME.id === u.id ? ' <span class="badge-me">사용 중</span>' : '') + '</div>' +
-      '<div class="row-s">' + esc(u.name) + '</div></div>' + ic('right', 15) + '</button>';
-  });
-  html += '<button class="row" data-act="add-user">' +
-    '<div class="avatar" style="background:var(--bg2);color:var(--fg)">' + ic('plus', 18) + '</div>' +
-    '<div class="row-main"><div class="row-t">계정 추가</div></div>' + ic('right', 15) + '</button>';
+  html += '<a class="row" href="#/accounts"><div class="row-main"><div class="row-t">계정 관리</div>' +
+    '<div class="row-s">추가 · 랜덤 생성 · 검색 · 정렬</div></div>' +
+    '<span class="row-r">' + USERS.length + '개</span>' + ic('right', 15) + '</a>';
 
   html += '<div class="sec-title">화면</div>';
   html += '<button class="row" data-act="theme"><div class="row-main"><div class="row-t">다크 모드</div></div>' +
@@ -1064,6 +1167,7 @@ function parseHash() {
   }
   if (h === '/me') return { route: 'me' };
   if (h === '/settings') return { route: 'settings' };
+  if (h === '/accounts') return { route: 'accounts' };
   return { route: 'feed' };
 }
 var _lastRoute = '';
@@ -1079,10 +1183,12 @@ async function render() {
   renderChrome();
   document.querySelector('.tabbar').style.display = h.route === 'post' ? 'none' : '';
   if (h.route !== 'post') { RB_KEY = ''; RB_TARGET = null; RB_OPEN = false; RB_TEXT = ''; RB_IMGS = []; }
+  if (h.route !== 'accounts') { ACC_Q = ''; ACC_SORT = 'new'; ACC_LIMIT = 100; }
   if (h.route === 'post') viewPost(h.id);
   else if (h.route === 'user') viewUser(h.id, false);
   else if (h.route === 'me') viewUser(ME.id, true);
   else if (h.route === 'topic') viewTopic(h.name);
+  else if (h.route === 'accounts') viewAccounts();
   else if (h.route === 'settings') viewSettings();
   else viewFeed();
   if (h.route !== 'post') window.scrollTo(0, 0);
@@ -1457,6 +1563,208 @@ async function wipeAll() {
   toast('초기화했습니다');
 }
 
+// ===== 랜덤 계정 생성 =====
+// 아이디와 이름이 서로 겉돌지 않게 단어 풀을 한글·영문 쌍으로 둔다.
+var G_SUR = [
+  { ko: '김', en: 'kim' }, { ko: '이', en: 'lee' }, { ko: '박', en: 'park' }, { ko: '최', en: 'choi' },
+  { ko: '정', en: 'jung' }, { ko: '강', en: 'kang' }, { ko: '조', en: 'cho' }, { ko: '윤', en: 'yoon' },
+  { ko: '장', en: 'jang' }, { ko: '임', en: 'lim' }, { ko: '한', en: 'han' }, { ko: '오', en: 'oh' },
+  { ko: '서', en: 'seo' }, { ko: '신', en: 'shin' }, { ko: '권', en: 'kwon' }, { ko: '황', en: 'hwang' },
+  { ko: '안', en: 'ahn' }, { ko: '송', en: 'song' }, { ko: '전', en: 'jeon' }, { ko: '홍', en: 'hong' },
+  { ko: '고', en: 'ko' }, { ko: '문', en: 'moon' }, { ko: '양', en: 'yang' }, { ko: '손', en: 'son' },
+  { ko: '배', en: 'bae' }, { ko: '백', en: 'baek' }, { ko: '허', en: 'heo' }, { ko: '유', en: 'yoo' },
+  { ko: '남', en: 'nam' }, { ko: '심', en: 'sim' }
+];
+var G_GIV = [
+  { ko: '서준', en: 'seojun' }, { ko: '하윤', en: 'hayoon' }, { ko: '도윤', en: 'doyoon' },
+  { ko: '지우', en: 'jiwoo' }, { ko: '예준', en: 'yejun' }, { ko: '시우', en: 'siwoo' },
+  { ko: '하준', en: 'hajun' }, { ko: '주원', en: 'juwon' }, { ko: '지호', en: 'jiho' },
+  { ko: '지훈', en: 'jihoon' }, { ko: '준우', en: 'junwoo' }, { ko: '건우', en: 'gunwoo' },
+  { ko: '현우', en: 'hyunwoo' }, { ko: '유준', en: 'yujun' }, { ko: '도현', en: 'dohyun' },
+  { ko: '민준', en: 'minjun' }, { ko: '서연', en: 'seoyeon' }, { ko: '지유', en: 'jiyu' },
+  { ko: '서윤', en: 'seoyoon' }, { ko: '하은', en: 'haeun' }, { ko: '지아', en: 'jia' },
+  { ko: '수아', en: 'sua' }, { ko: '다은', en: 'daeun' }, { ko: '은서', en: 'eunseo' },
+  { ko: '예은', en: 'yeeun' }, { ko: '소율', en: 'soyul' }, { ko: '채원', en: 'chaewon' },
+  { ko: '지윤', en: 'jiyoon' }, { ko: '윤서', en: 'yoonseo' }, { ko: '시아', en: 'sia' },
+  { ko: '연우', en: 'yeonwoo' }, { ko: '유나', en: 'yuna' }, { ko: '나은', en: 'naeun' },
+  { ko: '지민', en: 'jimin' }, { ko: '태현', en: 'taehyun' }, { ko: '민서', en: 'minseo' },
+  { ko: '재윤', en: 'jaeyoon' }, { ko: '수빈', en: 'subin' }, { ko: '하린', en: 'harin' },
+  { ko: '은우', en: 'eunwoo' }
+];
+// 닉네임용 단어 (앞말 + 뒷말로 조합)
+var G_NICK_A = [
+  { ko: '감자', en: 'gamja' }, { ko: '구름', en: 'gureum' }, { ko: '민트', en: 'mint' },
+  { ko: '초코', en: 'choco' }, { ko: '달빛', en: 'dalbit' }, { ko: '노을', en: 'noeul' },
+  { ko: '파도', en: 'pado' }, { ko: '딸기', en: 'ddalgi' }, { ko: '복숭아', en: 'boksunga' },
+  { ko: '우유', en: 'uyu' }, { ko: '밤하늘', en: 'bamhaneul' }, { ko: '고래', en: 'gorae' },
+  { ko: '토끼', en: 'tokki' }, { ko: '여우', en: 'yeowoo' }, { ko: '눈송이', en: 'nunsongi' },
+  { ko: '바다', en: 'bada' }, { ko: '햇살', en: 'haetsal' }, { ko: '보리', en: 'bori' },
+  { ko: '수박', en: 'subak' }, { ko: '자몽', en: 'jamong' }
+];
+var G_NICK_B = [
+  { ko: '수프', en: 'soup' }, { ko: '라떼', en: 'latte' }, { ko: '한스푼', en: 'spoon' },
+  { ko: '조각', en: 'jogak' }, { ko: '상자', en: 'box' }, { ko: '노트', en: 'note' },
+  { ko: '가게', en: 'shop' }, { ko: '일기', en: 'diary' }, { ko: '창고', en: 'storage' },
+  { ko: '정원', en: 'garden' }, { ko: '', en: '' }, { ko: '', en: '' }
+];
+var G_EN = ['quiet', 'blue', 'soft', 'lazy', 'tiny', 'moon', 'pine', 'wave', 'sugar', 'cloud',
+  'velvet', 'amber', 'olive', 'linen', 'foggy', 'plain', 'north', 'daily', 'slow', 'paper'];
+var G_EMOJI = ['🌿', '🌙', '☕️', '🐈', '🍋', '✨', '🫧', '🍊', '🌊', '🐚', '🧃', '🪴', '🍞', '🌱'];
+var G_BRAND = [
+  { ko: '디저트', en: 'dessert' }, { ko: '필라테스', en: 'pilates' }, { ko: '꽃집', en: 'flower' },
+  { ko: '사진관', en: 'studio' }, { ko: '베이커리', en: 'bakery' }, { ko: '커피', en: 'coffee' },
+  { ko: '공방', en: 'craft' }, { ko: '서점', en: 'books' }
+];
+var G_BRAND_TAIL = ['수제반죽 전문점', '원데이 클래스 운영', '주문제작 문의 DM', '매일 오전 10시 오픈',
+  '소량 생산', '예약제 운영'];
+var G_AREA = [
+  { ko: '서울', en: 'seoul' }, { ko: '연남', en: 'yeonnam' }, { ko: '성수', en: 'seongsu' },
+  { ko: '망원', en: 'mangwon' }, { ko: '부산', en: 'busan' }, { ko: '제주', en: 'jeju' },
+  { ko: '대구', en: 'daegu' }, { ko: '판교', en: 'pangyo' }
+];
+var G_JOB = [
+  { ko: '백엔드', en: 'backend' }, { ko: '프론트엔드', en: 'frontend' },
+  { ko: 'UI 디자이너', en: 'design' }, { ko: '마케터', en: 'marketer' },
+  { ko: 'PM', en: 'pm' }, { ko: '사진작가', en: 'photo' },
+  { ko: '에디터', en: 'editor' }, { ko: '데이터 분석', en: 'data' }
+];
+var G_BIO = [
+  '커피랑 책이랑 산책', '주말엔 대체로 산에 있습니다', '기록용 계정', '먹은 것만 올립니다',
+  '조용히 구경만 해요', '고양이 두 마리와 삽니다', '달리기 3년차', '가끔 옵니다',
+  '취향 저장소', '사는 얘기', '어제보다 조금만', '읽은 것들 모아둠'
+];
+
+function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+function chance(p) { return Math.random() < p; }
+function digits() {
+  var r = Math.random();
+  if (r < 0.3) return String(Math.floor(Math.random() * 9) + 1);
+  if (r < 0.6) return String(88 + Math.floor(Math.random() * 15));
+  if (r < 0.85) return String(Math.floor(Math.random() * 12) + 1).padStart(2, '0') +
+    String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+  return String(2018 + Math.floor(Math.random() * 8));
+}
+// 구분자를 섞어 아이디가 한 가지 모양으로 굳지 않게 한다
+function join2(a, b) {
+  var r = Math.random();
+  if (r < 0.4) return a + '_' + b;
+  if (r < 0.7) return a + '.' + b;
+  return a + b;
+}
+function makeAccount() {
+  var r = Math.random(), name, handle, bio = '';
+  if (r < 0.22) {                       // 이름칸에 아이디를 그대로 넣는 유형
+    var n1 = pick(G_NICK_A);
+    handle = chance(0.5) ? join2(n1.en, pick(G_EN)) : join2(pick(G_EN), digits());
+    name = handle;
+  } else if (r < 0.40) {                // 한글 닉네임
+    var a = pick(G_NICK_A), b = pick(G_NICK_B);
+    name = a.ko + b.ko;
+    handle = b.en ? join2(a.en, b.en) : a.en + (chance(0.5) ? digits() : '');
+  } else if (r < 0.54) {                // 한글 + 이모지
+    var g1 = pick(G_GIV);
+    name = g1.ko + ' ' + pick(G_EMOJI);
+    handle = chance(0.4) ? '_' + g1.en + '_' : join2(g1.en, chance(0.5) ? digits() : pick(G_EN));
+  } else if (r < 0.66) {                // 이중언어 병기
+    var g2 = pick(G_GIV);
+    var en2 = g2.en.charAt(0).toUpperCase() + g2.en.slice(1);
+    name = chance(0.5) ? g2.ko + ' | ' + en2 : en2 + ' ' + g2.ko;
+    handle = g2.en + '.' + pick(G_SUR).en.charAt(0);
+  } else if (r < 0.78) {                // 실명
+    var su = pick(G_SUR), gi = pick(G_GIV);
+    name = su.ko + gi.ko;
+    handle = chance(0.5) ? gi.en + '.' + su.en.charAt(0) : join2(gi.en, su.en);
+  } else if (r < 0.86) {                // 멋부린 영문
+    var w = pick(G_EN);
+    name = w.toUpperCase().split('').join(' ');
+    handle = chance(0.5) ? '___' + w + '___' : '_' + w + '_' + digits();
+  } else if (r < 0.94) {                // 가게·브랜드
+    var br = pick(G_BRAND), ar = pick(G_AREA);
+    name = ar.ko + ' ' + br.ko + ' ' + pick(G_BRAND_TAIL);
+    handle = join2(ar.en, br.en) + (chance(0.3) ? '.official' : '');
+    bio = pick(G_BRAND_TAIL);
+  } else {                              // 직함형
+    var job = pick(G_JOB), ar2 = pick(G_AREA), su2 = pick(G_SUR);
+    name = (2 + Math.floor(Math.random() * 9)) + '년차 ' + job.ko + ' / ' + ar2.ko;
+    handle = join2(job.en, chance(0.5) ? su2.en : ar2.en) + (chance(0.4) ? '.log' : '');
+    bio = job.ko + ' 하는 사람';
+  }
+  handle = handle.toLowerCase().replace(/[^a-z0-9._]/g, '');
+  if (!handle) handle = 'user' + digits();
+  if (!bio && chance(0.6)) bio = pick(G_BIO);
+  return { name: name, handle: handle, bio: bio, avatar: null, gen: true };
+}
+function putMany(store, arr) {
+  return new Promise(function (resolve, reject) {
+    var t = db.transaction(store, 'readwrite');
+    var st = t.objectStore(store);
+    arr.forEach(function (o) { st.put(o); });
+    t.oncomplete = function () { resolve(); };
+    t.onerror = function () { reject(t.error); };
+    t.onabort = function () { reject(t.error); };
+  });
+}
+async function generateAccounts(n) {
+  var taken = {};
+  USERS.forEach(function (u) { taken[u.handle] = 1; });
+  var out = [];
+  for (var i = 0; i < n; i++) {
+    var a = makeAccount(), guard = 0;
+    var base = a.handle;
+    while (taken[a.handle] && guard++ < 40) a.handle = base + digits();
+    if (taken[a.handle]) continue;
+    taken[a.handle] = 1;
+    out.push(a);
+  }
+  await putMany('users', out);
+  return out.length;
+}
+async function deleteGenerated() {
+  var gens = USERS.filter(function (u) { return u.gen && u.id !== ME.id; });
+  if (!gens.length) { toast('지울 랜덤 계정이 없습니다'); return; }
+  if (!confirm('랜덤으로 만든 계정 ' + gens.length + '개와 그 계정들이 쓴 스레드를 모두 삭제할까요?')) return;
+  var ids = {};
+  gens.forEach(function (u) { ids[u.id] = 1; });
+  var theirPosts = POSTS.filter(function (p) { return ids[p.author_id]; });
+  var pids = {};
+  theirPosts.forEach(function (p) { pids[p.id] = 1; });
+  var deadLikes = LIKES.filter(function (l) { return ids[l.user_id] || pids[l.post_id]; });
+  await delMany('likes', deadLikes.map(function (l) { return l.id; }));
+  await delMany('posts', theirPosts.map(function (p) { return p.id; }));
+  await delMany('users', gens.map(function (u) { return u.id; }));
+  await render();
+  toast(gens.length + '개 계정을 삭제했습니다');
+}
+function delMany(store, keys) {
+  if (!keys.length) return Promise.resolve();
+  return new Promise(function (resolve, reject) {
+    var t = db.transaction(store, 'readwrite');
+    var st = t.objectStore(store);
+    keys.forEach(function (k) { st.delete(k); });
+    t.oncomplete = function () { resolve(); };
+    t.onerror = function () { reject(t.error); };
+    t.onabort = function () { reject(t.error); };
+  });
+}
+function openGenSheet() {
+  openOvl('<div class="sheet"><div class="sheet-grab"></div>' +
+    '<div class="sheet-h">랜덤 계정 생성</div>' +
+    '<div class="field"><label>만들 개수 (최대 500)</label>' +
+      '<input id="gen-n" type="number" inputmode="numeric" min="1" max="500" value="10"></div>' +
+    '<div class="gen-presets">' +
+      '<button data-act="gen-preset" data-n="10">10</button>' +
+      '<button data-act="gen-preset" data-n="30">30</button>' +
+      '<button data-act="gen-preset" data-n="100">100</button>' +
+      '<button data-act="gen-preset" data-n="300">300</button>' +
+    '</div>' +
+    '<button class="btn-fill" data-act="gen-go">만들기</button>' +
+    '</div>', true);
+  setTimeout(function () {
+    var i = document.getElementById('gen-n');
+    if (i) { i.focus(); i.select(); }
+  }, 60);
+}
+
 // ===== 시드 =====
 async function ensureSeed() {
   var us = await getAll('users');
@@ -1605,6 +1913,22 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (act === 'theme') { applyTheme(getTheme() === 'dark' ? 'light' : 'dark'); await render(); return; }
+  if (act === 'acc-sort') { ACC_SORT = el.dataset.sort; ACC_LIMIT = 100; drawAccList(); return; }
+  if (act === 'acc-more') { ACC_LIMIT += 100; drawAccList(); return; }
+  if (act === 'gen-open') { openGenSheet(); return; }
+  if (act === 'gen-preset') { document.getElementById('gen-n').value = el.dataset.n; return; }
+  if (act === 'gen-go') {
+    var gn = parseInt((document.getElementById('gen-n') || {}).value, 10);
+    if (isNaN(gn) || gn < 1) { toast('1 이상의 숫자를 입력해주세요'); return; }
+    gn = Math.min(gn, 500);
+    closeOvl();
+    var made = await generateAccounts(gn);
+    ACC_SORT = 'new'; ACC_LIMIT = 100;
+    await render();
+    toast('랜덤 계정 ' + made + '개를 만들었습니다');
+    return;
+  }
+  if (act === 'gen-del') { await deleteGenerated(); return; }
   if (act === 'lk-save') { await saveLikeCount(false); return; }
   if (act === 'lk-reset') { await saveLikeCount(true); return; }
   if (act === 'passwd') { await changePassword(); return; }
