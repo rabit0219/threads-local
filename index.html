@@ -106,6 +106,33 @@ svg { display: block; }
 .p-act .cnt { color: var(--muted); font-size: 13px; }
 .p-act.liked .cnt { color: var(--like); }
 .p-meta { color: var(--muted); font-size: 14px; margin-top: 2px; }
+.p-act.reposted { color: #1c9c5b; }
+.p-act.reposted .cnt { color: #1c9c5b; }
+/* 리포스트 머리글 */
+.rp-head {
+  display: flex; align-items: center; gap: 7px; color: var(--muted);
+  font-size: 13px; font-weight: 600; padding: 12px 16px 0 41px;
+}
+.rp-head svg { flex-shrink: 0; }
+/* 인용 카드 */
+.quote {
+  margin-top: 10px; border: 1px solid var(--line2); border-radius: 12px;
+  padding: 11px 12px; cursor: pointer;
+}
+.quote:active { background: var(--bg2); }
+.q-head { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+.q-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-time { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+.q-text {
+  font-size: 14px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.q-thumb { margin-top: 8px; }
+.q-thumb img { max-height: 160px; max-width: 100%; border-radius: 8px; border: 1px solid var(--line); }
+.q-gone { color: var(--muted); font-size: 14px; }
+/* 작성 모달의 인용 미리보기 */
+.c-quote { padding: 0 16px 4px; }
+.c-quote .quote { margin-top: 0; cursor: default; }
 .post.clickable { cursor: pointer; }
 
 /* 상세 */
@@ -384,7 +411,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.12';
+var APP_VER = 'v1.13';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -394,10 +421,13 @@ var ME = null;          // 현재 계정 객체
 var USERS = [];         // 전체 계정
 var POSTS = [];         // 전체 글
 var LIKES = [];         // 전체 좋아요
+var REPOSTS = [];       // 전체 리포스트
 var UMAP = {};          // id -> user
 var KIDS = {};          // parent_id -> [post]
 var LIKE_CNT = {};      // post_id -> count
 var MY_LIKE = {};       // post_id -> true (현재 계정 기준)
+var RP_CNT = {};        // post_id -> 리포스트 수
+var MY_RP = {};         // post_id -> true (현재 계정 기준)
 var PROF_TAB = 'posts'; // 프로필 탭 상태
 // 인라인 답글 바 상태
 var RB_KEY = '';        // 어느 스레드의 바인지
@@ -432,7 +462,9 @@ function ic(name, size) {
     plus: '<path d="M12 5v14M5 12h14"/>',
     x: '<path d="m6 6 12 12M18 6 6 18"/>',
     right: '<path d="m9 4.5 7.5 7.5L9 19.5"/>',
-    check: '<path d="m5 12.6 4.8 4.8L19 6.4"/>'
+    check: '<path d="m5 12.6 4.8 4.8L19 6.4"/>',
+    repost: '<path d="M16.8 2.6 20.4 6.2 16.8 9.8"/><path d="M20.4 6.2H8a4.4 4.4 0 0 0-4.4 4.4v1.1"/>' +
+      '<path d="M7.2 21.4 3.6 17.8 7.2 14.2"/><path d="M3.6 17.8H16a4.4 4.4 0 0 0 4.4-4.4v-1.1"/>'
   };
   return open + P[name] + '</svg>';
 }
@@ -445,7 +477,7 @@ function icHeartFill(size) {
 // ===== IndexedDB =====
 function openDB() {
   return new Promise(function (resolve, reject) {
-    var req = indexedDB.open(DB_NAME, 1);
+    var req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = function (e) {
       var d = e.target.result;
       if (!d.objectStoreNames.contains('users')) {
@@ -458,6 +490,10 @@ function openDB() {
       }
       if (!d.objectStoreNames.contains('likes')) {
         d.createObjectStore('likes', { keyPath: 'id' });
+      }
+      // v2에서 추가. 기존 스토어는 건드리지 않는다.
+      if (!d.objectStoreNames.contains('reposts')) {
+        d.createObjectStore('reposts', { keyPath: 'id' });
       }
     };
     req.onsuccess = function () { resolve(req.result); };
@@ -702,6 +738,7 @@ async function loadData() {
   USERS = await getAll('users');
   POSTS = await getAll('posts');
   LIKES = await getAll('likes');
+  REPOSTS = await getAll('reposts');
   USERS.sort(function (a, b) { return a.id - b.id; });
   POSTS.sort(function (a, b) { return b.ts - a.ts; });
   UMAP = {};
@@ -721,10 +758,22 @@ async function loadData() {
     LIKE_CNT[l.post_id] = (LIKE_CNT[l.post_id] || 0) + 1;
     if (ME && l.user_id === ME.id) MY_LIKE[l.post_id] = true;
   });
+  RP_CNT = {}; MY_RP = {};
+  REPOSTS.forEach(function (r) {
+    RP_CNT[r.post_id] = (RP_CNT[r.post_id] || 0) + 1;
+    if (ME && r.user_id === ME.id) MY_RP[r.post_id] = true;
+  });
+}
+function postById(id) {
+  for (var i = 0; i < POSTS.length; i++) if (POSTS[i].id === id) return POSTS[i];
+  return null;
 }
 // 표시 개수 = 실제 좋아요 + 수동 가산치(likes_pad). 내 하트 상태는 실제 값 그대로 유지된다.
 function likeCount(p) {
   return Math.max(0, (LIKE_CNT[p.id] || 0) + (p.likes_pad || 0));
+}
+function repostCount(p) {
+  return Math.max(0, (RP_CNT[p.id] || 0) + (p.reposts_pad || 0));
 }
 function childrenOf(id, includeChain) {
   var a = KIDS[id] || [];
@@ -787,6 +836,7 @@ function postRow(p, o) {
   var liked = !!MY_LIKE[p.id];
   var lc = likeCount(p);
   var rc = replyCount(p.id);
+  var pc = repostCount(p);
   var cls = 'post' + (o.sep ? ' sep' : '') + (o.detail ? ' detail' : '') + (o.detail ? '' : ' clickable');
   var attrs = o.detail ? '' : ' data-act="open" data-id="' + p.id + '"';
 
@@ -805,6 +855,10 @@ function postRow(p, o) {
       '<button class="p-act" data-act="reply" data-id="' + p.id + '">' + ic('bubble', 21) +
         (rc ? '<span class="cnt">' + rc + '</span>' : '') +
       '</button>' +
+      '<button class="p-act' + (MY_RP[p.id] ? ' reposted' : '') + '" data-act="repost" ' +
+        'data-long="repost" data-id="' + p.id + '">' + ic('repost', 21) +
+        (pc ? '<span class="cnt">' + pc + '</span>' : '') +
+      '</button>' +
     '</div>';
 
   return '<div class="' + cls + '"' + attrs + '>' +
@@ -822,8 +876,23 @@ function postRow(p, o) {
         '<button class="p-more" data-act="more" data-id="' + p.id + '">' + ic('more', 18) + '</button>' +
       '</div>' +
       '<div class="p-text">' + esc(p.text) + '</div>' +
-      imgs + acts +
+      imgs + (p.quote_of ? quoteCard(p.quote_of) : '') + acts +
     '</div>' +
+  '</div>';
+}
+
+// 인용된 원글을 작은 카드로. 카드 안에서 또 인용을 펼치지는 않는다.
+function quoteCard(qid) {
+  var q = postById(qid);
+  if (!q) return '<div class="quote"><div class="q-gone">삭제된 스레드입니다</div></div>';
+  var qu = userById(q.author_id);
+  var thumb = (q.imgs && q.imgs.length)
+    ? '<div class="q-thumb"><img src="' + q.imgs[0] + '" alt=""></div>' : '';
+  return '<div class="quote" data-act="open" data-id="' + q.id + '">' +
+    '<div class="q-head">' + avatarHtml(qu, 'sm') +
+      '<span class="q-name">' + esc(qu.handle) + '</span>' +
+      '<span class="q-time">' + rel(q.ts) + '</span></div>' +
+    '<div class="q-text">' + esc(q.text) + '</div>' + thumb +
   '</div>';
 }
 
@@ -844,10 +913,32 @@ function listHtml(roots, emptyMsg) {
 }
 
 // ===== 피드 =====
+function rpHead(userId) {
+  return '<div class="rp-head">' + ic('repost', 14) +
+    '<span>' + esc(userById(userId).handle) + '님이 리포스트함</span></div>';
+}
+// 원글과 리포스트를 시간순으로 섞는다. 같은 글이 원글로도, 리포스트로도 뜬다 (실제 쓰레드와 동일)
+function feedEntries() {
+  var out = [];
+  POSTS.forEach(function (p) {
+    if (p.parent_id == null) out.push({ ts: p.ts, post: p, by: null });
+  });
+  REPOSTS.forEach(function (r) {
+    var p = postById(r.post_id);
+    if (p) out.push({ ts: r.ts, post: p, by: r.user_id });
+  });
+  out.sort(function (a, b) { return b.ts - a.ts; });
+  return out;
+}
+function entriesHtml(entries, emptyMsg) {
+  if (!entries.length) return '<p class="empty">' + emptyMsg + '</p>';
+  return entries.map(function (e, i) {
+    return (e.by ? rpHead(e.by) : '') + feedCard(e.post, i === 0 && !e.by);
+  }).join('');
+}
 function viewFeed() {
   bar({ logo: true });
-  var roots = POSTS.filter(function (p) { return p.parent_id == null; });
-  appEl.innerHTML = listHtml(roots,
+  appEl.innerHTML = entriesHtml(feedEntries(),
     '아직 아무것도 없네요.<br>아래 연필 버튼으로 첫 스레드를 남겨보세요.');
 }
 
@@ -861,7 +952,7 @@ function viewPost(id) {
   anc.forEach(function (a) { html += postRow(a, { rail: true }); });
   html += postRow(p, { detail: true, sep: anc.length > 0 });
   html += '<div class="detail-stats">' + fullTime(p.ts) +
-    ' · 좋아요 ' + likeCount(p) + '개 · 답글 ' + replyCount(p.id) + '개</div>';
+    ' · 좋아요 ' + likeCount(p) + '개 · 답글 ' + replyCount(p.id) + '개 · 리포스트 ' + repostCount(p) + '개</div>';
 
   // 체인 뒷부분
   var tail = chainOf(p.id);
@@ -1025,10 +1116,17 @@ function viewUser(id, isMeTab) {
     '<div class="ptabs">' +
       '<button data-act="ptab" data-tab="posts" class="' + (PROF_TAB === 'posts' ? 'on' : '') + '">스레드</button>' +
       '<button data-act="ptab" data-tab="replies" class="' + (PROF_TAB === 'replies' ? 'on' : '') + '">답글</button>' +
+      '<button data-act="ptab" data-tab="reposts" class="' + (PROF_TAB === 'reposts' ? 'on' : '') + '">리포스트</button>' +
     '</div>';
 
   if (PROF_TAB === 'posts') {
     html += listHtml(roots, '아직 스레드가 없습니다.');
+  } else if (PROF_TAB === 'reposts') {
+    var mine2 = REPOSTS.filter(function (r) { return r.user_id === u.id; })
+      .sort(function (a, b) { return b.ts - a.ts; })
+      .map(function (r) { return { ts: r.ts, post: postById(r.post_id), by: r.user_id }; })
+      .filter(function (e) { return e.post; });
+    html += entriesHtml(mine2, '아직 리포스트가 없습니다.');
   } else if (!reps.length) {
     html += '<p class="empty">아직 답글이 없습니다.</p>';
   } else {
@@ -1160,15 +1258,15 @@ function viewSettings() {
 
   html += '<div class="sec-title">데이터</div>';
   html += '<button class="row" data-act="export"><div class="row-main"><div class="row-t">백업 내보내기</div>' +
-    '<div class="row-s">계정 · 스레드 · 좋아요 전체를 JSON 파일로</div></div>' + ic('right', 15) + '</button>';
+    '<div class="row-s">계정 · 스레드 · 좋아요 · 리포스트 전체를 JSON 파일로</div></div>' + ic('right', 15) + '</button>';
   html += '<button class="row" data-act="import"><div class="row-main"><div class="row-t">백업 불러오기</div>' +
     '<div class="row-s">현재 데이터를 덮어씁니다</div></div>' + ic('right', 15) + '</button>';
   html += '<button class="row danger" data-act="wipe"><div class="row-main"><div class="row-t">전체 초기화</div>' +
     '<div class="row-s">모든 계정과 스레드를 지우고 처음 상태로</div></div></button>';
   html += '<div class="sec-title">숨은 기능</div>';
   html += '<div class="row" style="align-items:flex-start"><div class="row-main">' +
-    '<div class="row-t">하트를 꾹 누르면</div>' +
-    '<div class="row-s" style="white-space:normal">좋아요 개수를 원하는 숫자로 맞출 수 있습니다</div></div></div>';
+    '<div class="row-t">하트·리포스트를 꾹 누르면</div>' +
+    '<div class="row-s" style="white-space:normal">그 개수를 원하는 숫자로 맞출 수 있습니다</div></div></div>';
   html += '<div class="row" style="align-items:flex-start"><div class="row-main">' +
     '<div class="row-t">아이디를 꾹 누르면</div>' +
     '<div class="row-s" style="white-space:normal">그 계정으로 바로 전환됩니다. ' +
@@ -1286,6 +1384,7 @@ async function toggleLike(pid) {
 var CBOX = [];
 var CREPLY = null;
 var CTOPIC = '';
+var CQUOTE = null;      // 인용 대상 글 id
 function allTopics() {
   var seen = {}, out = [];
   POSTS.forEach(function (p) {
@@ -1295,6 +1394,7 @@ function allTopics() {
 }
 function composerHtml() {
   var isReply = CREPLY != null;
+  var isQuote = CQUOTE != null;
   var canPost = CBOX.some(function (b) { return b.text.trim() || b.imgs.length; });
   var last = CBOX.length - 1;
   var boxes = CBOX.map(function (b, i) {
@@ -1324,15 +1424,17 @@ function composerHtml() {
   }).join('');
 
   var lastReady = !!(CBOX[last] && (CBOX[last].text.trim() || CBOX[last].imgs.length));
-  var addRow = isReply ? '' : addRowHtml(lastReady);
+  var addRow = (isReply || isQuote) ? '' : addRowHtml(lastReady);
 
   return '<div class="modal">' +
     '<div class="modal-h">' +
       '<button class="m-c" data-act="c-cancel">취소</button>' +
-      '<div class="m-t">' + (isReply ? '답글' : '새 스레드') + '</div>' +
+      '<div class="m-t">' + (isReply ? '답글' : (isQuote ? '인용' : '새 스레드')) + '</div>' +
       '<button class="m-d" data-act="c-submit"' + (canPost ? '' : ' disabled') + '>게시</button>' +
     '</div>' +
-    '<div class="modal-b">' + boxes + addRow + '</div>' +
+    '<div class="modal-b">' + boxes +
+      (isQuote ? '<div class="c-quote">' + quoteCard(CQUOTE) + '</div>' : '') +
+      addRow + '</div>' +
   '</div>';
 }
 function addRowHtml(ready) {
@@ -1375,8 +1477,9 @@ function drawComposer(focusBox) {
     setTimeout(syncOvl, 60);
   }
 }
-function openComposer(replyTo) {
+function openComposer(replyTo, quoteOf) {
   CREPLY = replyTo == null ? null : replyTo;
+  CQUOTE = quoteOf == null ? null : quoteOf;
   CBOX = [{ text: '', imgs: [] }];
   CTOPIC = '';
   drawComposer(0);
@@ -1396,16 +1499,18 @@ async function submitComposer() {
     for (var i = 0; i < boxes.length; i++) {
       var id = await put('posts', {
         author_id: ME.id, text: boxes[i].text.trim(), imgs: boxes[i].imgs,
-        parent_id: prevId, chain_of: rootId, topic: topic, ts: t + i
+        parent_id: prevId, chain_of: rootId, topic: topic,
+        quote_of: (i === 0 ? CQUOTE : null), ts: t + i
       });
       if (i === 0) rootId = id;
       prevId = id;
     }
   }
+  var wasQuote = CQUOTE != null;
   closeOvl();
-  CBOX = []; CREPLY = null; CTOPIC = '';
+  CBOX = []; CREPLY = null; CTOPIC = ''; CQUOTE = null;
   await render();
-  toast(topic ? topic + '에 게시했습니다' : '게시했습니다');
+  toast(wasQuote ? '인용해서 게시했습니다' : (topic ? topic + '에 게시했습니다' : '게시했습니다'));
 }
 
 // ===== 더보기 시트 =====
@@ -1434,7 +1539,34 @@ async function deletePostDeep(pid) {
     await del('posts', all[i]);
     var ls = LIKES.filter(function (l) { return l.post_id === all[i]; });
     for (var j = 0; j < ls.length; j++) await del('likes', ls[j].id);
+    var rs = REPOSTS.filter(function (r) { return r.post_id === all[i]; });
+    for (var k = 0; k < rs.length; k++) await del('reposts', rs[k].id);
   }
+}
+
+// ===== 리포스트 / 인용 =====
+function openRepostSheet(pid) {
+  var mine = !!MY_RP[pid];
+  openOvl('<div class="sheet"><div class="sheet-grab"></div>' +
+    '<button class="row' + (mine ? ' danger' : '') + '" data-act="rp-toggle" data-id="' + pid + '">' +
+      '<div class="avatar" style="background:var(--bg2);color:var(--fg)">' + ic('repost', 18) + '</div>' +
+      '<div class="row-main"><div class="row-t">' + (mine ? '리포스트 취소' : '리포스트') + '</div>' +
+      '<div class="row-s">' + (mine ? '내 피드와 프로필에서 내립니다' : '내 피드와 프로필에 그대로 올립니다') +
+      '</div></div></button>' +
+    '<button class="row" data-act="rp-quote" data-id="' + pid + '">' +
+      '<div class="avatar" style="background:var(--bg2);color:var(--fg)">' + ic('write', 18) + '</div>' +
+      '<div class="row-main"><div class="row-t">인용</div>' +
+      '<div class="row-s">내 코멘트를 붙여 새 스레드로</div></div></button>' +
+    '</div>', true);
+}
+async function toggleRepost(pid) {
+  var key = pid + ':' + ME.id;
+  var was = !!MY_RP[pid];
+  if (was) await del('reposts', key);
+  else await put('reposts', { id: key, post_id: pid, user_id: ME.id, ts: Date.now() });
+  closeOvl();
+  await render();
+  toast(was ? '리포스트를 취소했습니다' : '리포스트했습니다');
 }
 
 // ===== 계정 전환 =====
@@ -1540,6 +1672,10 @@ async function deleteAccount(id) {
     return l.user_id === id || theirs.some(function (p) { return p.id === l.post_id; });
   });
   for (var j = 0; j < ls.length; j++) await del('likes', ls[j].id);
+  var rs2 = REPOSTS.filter(function (r) {
+    return r.user_id === id || theirs.some(function (p) { return p.id === r.post_id; });
+  });
+  for (var k2 = 0; k2 < rs2.length; k2++) await del('reposts', rs2[k2].id);
   await del('users', id);
   if (meId() === id) {
     var rest = USERS.filter(function (x) { return x.id !== id; });
@@ -1553,7 +1689,7 @@ async function deleteAccount(id) {
 
 // ===== 백업 =====
 async function exportData() {
-  var data = { app: 'threads-local', ver: APP_VER, at: Date.now(), users: USERS, posts: POSTS, likes: LIKES };
+  var data = { app: 'threads-local', ver: APP_VER, at: Date.now(), users: USERS, posts: POSTS, likes: LIKES, reposts: REPOSTS };
   var blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1574,9 +1710,11 @@ function importData() {
         if (!d.users || !d.posts) throw new Error('형식이 맞지 않습니다');
         if (!confirm('현재 데이터를 모두 지우고 백업으로 덮어쓸까요?')) return;
         await clearStore('users'); await clearStore('posts'); await clearStore('likes');
+        await clearStore('reposts');
         for (var i = 0; i < d.users.length; i++) await put('users', d.users[i]);
         for (var j = 0; j < d.posts.length; j++) await put('posts', d.posts[j]);
         for (var k = 0; k < (d.likes || []).length; k++) await put('likes', d.likes[k]);
+        for (var m = 0; m < (d.reposts || []).length; m++) await put('reposts', d.reposts[m]);
         setMeId(d.users[0].id);
         await render();
         toast('불러왔습니다');
@@ -1589,6 +1727,7 @@ function importData() {
 async function wipeAll() {
   if (!confirm('모든 계정과 스레드를 지우고 처음 상태로 되돌릴까요?')) return;
   await clearStore('users'); await clearStore('posts'); await clearStore('likes');
+  await clearStore('reposts');
   try { localStorage.removeItem(K_ME); } catch (e) {}
   await ensureSeed();
   await render();
@@ -1763,6 +1902,8 @@ async function deleteGenerated() {
   theirPosts.forEach(function (p) { pids[p.id] = 1; });
   var deadLikes = LIKES.filter(function (l) { return ids[l.user_id] || pids[l.post_id]; });
   await delMany('likes', deadLikes.map(function (l) { return l.id; }));
+  var deadRp = REPOSTS.filter(function (r) { return ids[r.user_id] || pids[r.post_id]; });
+  await delMany('reposts', deadRp.map(function (r) { return r.id; }));
   await delMany('posts', theirPosts.map(function (p) { return p.id; }));
   await delMany('users', gens.map(function (u) { return u.id; }));
   await render();
@@ -1872,6 +2013,9 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (act === 'like') { e.stopPropagation(); await toggleLike(id); return; }
+  if (act === 'repost') { e.stopPropagation(); openRepostSheet(id); return; }
+  if (act === 'rp-toggle') { await toggleRepost(id); return; }
+  if (act === 'rp-quote') { closeOvl(); openComposer(null, id); return; }
   if (act === 'reply') {
     e.stopPropagation();
     // 스레드 안에서는 별도 창 없이 아래 답글 바로 바로 단다
@@ -1920,7 +2064,7 @@ document.addEventListener('click', async function (e) {
   if (act === 'c-cancel') {
     var dirty = CBOX.some(function (b) { return b.text.trim() || b.imgs.length; });
     if (dirty && !confirm('작성 중인 내용을 버릴까요?')) return;
-    closeOvl(); CBOX = []; CREPLY = null;
+    closeOvl(); CBOX = []; CREPLY = null; CQUOTE = null;
     return;
   }
   if (act === 'c-submit') { await submitComposer(); return; }
@@ -1990,7 +2134,8 @@ function lpFire(el) {
   var kind = el.dataset.long;
   var id = el.dataset.id ? parseInt(el.dataset.id, 10) : null;
   if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
-  if (kind === 'like') openLikeSheet(id);
+  if (kind === 'like') openCountSheet(id, 'like');
+  else if (kind === 'repost') openCountSheet(id, 'repost');
   else if (kind === 'me') openSwitcher();
   else if (kind === 'user') {
     if (!UMAP[id]) return;                 // 지워진 계정이면 반응 없음
@@ -2035,18 +2180,24 @@ document.addEventListener('contextmenu', function (e) {
 });
 
 // ===== 좋아요 개수 직접 지정 =====
-var LK_PID = null;
-function openLikeSheet(pid) {
-  var post = POSTS.filter(function (x) { return x.id === pid; })[0];
+var LK_PID = null, LK_KIND = 'like';
+function cntReal(pid, kind) { return (kind === 'like' ? LIKE_CNT[pid] : RP_CNT[pid]) || 0; }
+function cntShown(post, kind) { return kind === 'like' ? likeCount(post) : repostCount(post); }
+function cntPad(post, kind) { return (kind === 'like' ? post.likes_pad : post.reposts_pad) || 0; }
+function openCountSheet(pid, kind) {
+  var post = postById(pid);
   if (!post) return;
-  LK_PID = pid;
-  var real = LIKE_CNT[pid] || 0;
+  LK_PID = pid; LK_KIND = kind || 'like';
+  var label = LK_KIND === 'like' ? '좋아요' : '리포스트';
+  var unit = LK_KIND === 'like' ? '실제로 누른 사람은 ' : '실제로 리포스트한 사람은 ';
+  var real = cntReal(pid, LK_KIND);
   openOvl('<div class="sheet"><div class="sheet-grab"></div>' +
-    '<div class="sheet-h">좋아요 개수</div>' +
-    '<div class="field"><label>표시할 개수 — 실제로 누른 사람은 ' + real + '명</label>' +
-      '<input id="lk-n" type="number" inputmode="numeric" min="0" max="9999999" value="' + likeCount(post) + '"></div>' +
+    '<div class="sheet-h">' + label + ' 개수</div>' +
+    '<div class="field"><label>표시할 개수 — ' + unit + real + '명</label>' +
+      '<input id="lk-n" type="number" inputmode="numeric" min="0" max="9999999" value="' +
+      cntShown(post, LK_KIND) + '"></div>' +
     '<button class="btn-fill" data-act="lk-save">확인</button>' +
-    (post.likes_pad ? '<button class="row" data-act="lk-reset"><div class="row-main">' +
+    (cntPad(post, LK_KIND) ? '<button class="row" data-act="lk-reset"><div class="row-main">' +
       '<div class="row-t">실제 개수(' + real + ')로 되돌리기</div></div></button>' : '') +
     '</div>', true);
   setTimeout(function () {
@@ -2055,21 +2206,22 @@ function openLikeSheet(pid) {
   }, 60);
 }
 async function saveLikeCount(reset) {
-  var post = POSTS.filter(function (x) { return x.id === LK_PID; })[0];
+  var post = postById(LK_PID);
   if (!post) { closeOvl(); return; }
-  var real = LIKE_CNT[post.id] || 0;
-  if (reset) {
-    post.likes_pad = 0;
-  } else {
+  var real = cntReal(post.id, LK_KIND);
+  var v = 0;
+  if (!reset) {
     var el = document.getElementById('lk-n');
-    var v = parseInt(el ? el.value : '', 10);
+    v = parseInt(el ? el.value : '', 10);
     if (isNaN(v) || v < 0) { toast('0 이상의 숫자를 입력해주세요'); return; }
-    post.likes_pad = v - real;
   }
+  var pad = reset ? 0 : v - real;
+  if (LK_KIND === 'like') post.likes_pad = pad; else post.reposts_pad = pad;
   await put('posts', post);
   closeOvl();
   await render();
-  toast(reset ? '실제 개수로 되돌렸습니다' : '좋아요를 ' + likeCount(post) + '개로 맞췄습니다');
+  var label = LK_KIND === 'like' ? '좋아요' : '리포스트';
+  toast(reset ? '실제 개수로 되돌렸습니다' : label + '를 ' + cntShown(post, LK_KIND) + '개로 맞췄습니다');
 }
 
 function openImg(src) {
