@@ -326,8 +326,63 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 .rb-thumbs::-webkit-scrollbar { display: none; }
 .rb-thumbs .c-thumb img { height: 84px; }
 
-.imgview { position: fixed; inset: 0; background: #000; z-index: 300; display: flex; align-items: center; justify-content: center; }
-.imgview img { max-width: 100%; max-height: 100%; }
+/* ===== 사진 뷰어 ===== */
+.imgview {
+  position: fixed; left: 0; top: 0; width: 100%; height: 100vh; height: 100dvh;
+  background: #000; z-index: 150; overflow: hidden; color: #fff;
+}
+.iv-top {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; justify-content: space-between;
+  align-items: center; padding: 14px; padding-top: calc(14px + env(safe-area-inset-top)); pointer-events: none;
+}
+.iv-top > * { pointer-events: auto; }
+.iv-btn {
+  width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.14);
+  display: flex; align-items: center; justify-content: center; color: #fff;
+}
+.iv-cnt { background: rgba(255,255,255,.14); border-radius: 16px; padding: 6px 12px; font-size: 13px; font-weight: 600; }
+.iv-track {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: flex;
+  overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch; transition: height .28s ease;
+}
+.iv-track::-webkit-scrollbar { display: none; }
+.iv-track.zoomed { scroll-snap-type: none; }
+.iv-slide {
+  flex: 0 0 100%; width: 100%; height: 100%; scroll-snap-align: center;
+  display: flex; align-items: center; justify-content: center;
+}
+.iv-slide img {
+  max-width: 100%; max-height: 100%; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; transform-origin: center center; will-change: transform;
+}
+.iv-acts {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; justify-content: center; gap: 26px;
+  padding: 14px 0 calc(16px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.6));
+  transition: opacity .2s;
+}
+.iv-acts .p-act { color: #fff; font-size: 15px; gap: 7px; }
+.iv-acts .p-act .cnt { color: #fff; font-size: 15px; }
+.iv-acts .p-act.liked, .iv-acts .p-act.liked .cnt { color: var(--like); }
+.iv-acts .p-act.reposted, .iv-acts .p-act.reposted .cnt { color: #1c9c5b; }
+.imgview.cm .iv-acts { opacity: 0; pointer-events: none; }
+.imgview.cm .iv-top { opacity: 0; pointer-events: none; }
+.imgview.cm .iv-track { height: 38%; }
+.imgview.cm .iv-slide img { border-radius: 14px; max-height: 92%; }
+.iv-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 62%; background: var(--bg); color: var(--fg);
+  border-radius: 18px 18px 0 0; transform: translateY(100%); transition: transform .28s ease;
+  display: flex; flex-direction: column; z-index: 4;
+}
+.imgview.cm .iv-sheet { transform: none; }
+.iv-grab { padding: 10px 0 4px; display: flex; justify-content: center; cursor: pointer; }
+.iv-grab i { width: 40px; height: 4px; border-radius: 2px; background: var(--line2); display: block; }
+.iv-sh-head { padding: 6px 16px 10px; font-size: 16px; font-weight: 700; border-bottom: 1px solid var(--line); }
+.iv-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.iv-reply { border-top: 1px solid var(--line); padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); }
+.iv-thumbs { display: flex; gap: 8px; padding: 0 2px 8px; overflow-x: auto; scrollbar-width: none; }
+.iv-thumbs:empty { display: none; }
+.iv-thumbs .c-thumb img { height: 72px; }
 .toast {
   position: fixed; bottom: 82px; left: 50%; transform: translateX(-50%); z-index: 400;
   background: var(--fg); color: var(--bg); padding: 11px 18px; border-radius: 10px; font-size: 14px;
@@ -426,7 +481,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.14';
+var APP_VER = 'v1.15';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -869,8 +924,8 @@ function postRow(p, o) {
 
   var imgs = '';
   if (p.imgs && p.imgs.length) {
-    imgs = '<div class="p-imgs">' + p.imgs.map(function (src) {
-      return '<img src="' + src + '" data-act="img" data-src="' + src + '" alt="">';
+    imgs = '<div class="p-imgs">' + p.imgs.map(function (src, j) {
+      return '<img src="' + src + '" data-act="img" data-pid="' + p.id + '" data-idx="' + j + '" alt="">';
     }).join('') + '</div>';
   }
   var acts =
@@ -914,7 +969,7 @@ function quoteCard(qid) {
   if (!q) return '<div class="quote"><div class="q-gone">삭제된 스레드입니다</div></div>';
   var qu = userById(q.author_id);
   var thumb = (q.imgs && q.imgs.length)
-    ? '<div class="q-thumb"><img src="' + q.imgs[0] + '" alt=""></div>' : '';
+    ? '<div class="q-thumb"><img src="' + q.imgs[0] + '" data-act="img" data-pid="' + q.id + '" data-idx="0" alt=""></div>' : '';
   return '<div class="quote" data-act="open" data-id="' + q.id + '">' +
     '<div class="q-head">' + avatarHtml(qu, 'sm') +
       '<span class="q-name">' + esc(qu.handle) + '</span>' +
@@ -1354,6 +1409,7 @@ async function render() {
   else if (h.route === 'settings') viewSettings();
   else viewFeed();
   if (h.route !== 'post') window.scrollTo(0, 0);
+  if (VW) refreshViewer();
 }
 function rerender() { return render(); }
 
@@ -1369,6 +1425,7 @@ function lockScroll() {
 }
 function unlockScroll() {
   if (!document.body.classList.contains('locked')) return;
+  if (document.querySelector('.imgview')) return;
   document.body.classList.remove('locked');
   document.body.style.top = '';
   window.scrollTo(0, _lockY);
@@ -1383,8 +1440,8 @@ function syncOvl() {
   ov.style.top = vv.offsetTop + 'px';
 }
 if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', function () { syncOvl(); syncReplyBar(); });
-  window.visualViewport.addEventListener('scroll', function () { syncOvl(); syncReplyBar(); });
+  window.visualViewport.addEventListener('resize', function () { syncOvl(); syncReplyBar(); syncViewer(); });
+  window.visualViewport.addEventListener('scroll', function () { syncOvl(); syncReplyBar(); syncViewer(); });
 }
 function closeOvl() {
   var o = document.querySelector('.ovl');
@@ -2057,7 +2114,22 @@ document.addEventListener('click', async function (e) {
   if (act === 'back') { history.length > 1 ? history.back() : nav('#/'); return; }
   if (act === 'open') { closeOvl(); nav('#/p/' + id); return; }
   if (act === 'user') { e.stopPropagation(); closeOvl(); nav(ME && id === ME.id ? '#/me' : '#/u/' + id); return; }
-  if (act === 'img') { e.stopPropagation(); openImg(el.dataset.src); return; }
+  if (act === 'img') {
+    e.stopPropagation();
+    if (el.dataset.pid) openViewer(parseInt(el.dataset.pid, 10), parseInt(el.dataset.idx || '0', 10));
+    else openImg(el.dataset.src);
+    return;
+  }
+  if (act === 'vw-close') { closeViewer(); return; }
+  if (act === 'vw-cm') { setViewerMode('cm'); return; }
+  if (act === 'vw-photo') { setViewerMode('photo'); return; }
+  if (act === 'vw-submit') { await submitViewerReply(); return; }
+  if (act === 'vw-img') {
+    pickImages(function (arr) { if (!VW) return; VW.vimgs = VW.vimgs.concat(arr).slice(0, 4); renderViewerThumbs(); },
+      { tip: '테두리를 끌어 자를 영역을 정하세요.' });
+    return;
+  }
+  if (act === 'vw-delimg') { if (VW) { VW.vimgs.splice(parseInt(el.dataset.idx, 10), 1); renderViewerThumbs(); } return; }
   if (act === 'topic') {
     e.stopPropagation(); closeOvl();
     nav('#/t/' + encodeURIComponent(el.dataset.topic));
@@ -2327,10 +2399,284 @@ async function saveLikeCount(reset) {
   toast(reset ? '실제 개수로 되돌렸습니다' : label + '를 ' + cntShown(post, LK_KIND) + '개로 맞췄습니다');
 }
 
-function openImg(src) {
+// ===== 사진 뷰어 =====
+// 가로 넘김은 scroll-snap(네이티브), 핀치 줌과 줌 상태의 끌기는 touch 이벤트로 직접 처리한다.
+// 줌이 1보다 크면 touchmove를 preventDefault해서 네이티브 스크롤이 끼어들지 못하게 한다.
+var VW = null;
+function openViewer(pid, idx) {
+  var post = postById(pid);
+  if (!post || !post.imgs || !post.imgs.length) return;
+  closeViewer();
+  VW = {
+    pid: pid, imgs: post.imgs, idx: Math.min(Math.max(idx || 0, 0), post.imgs.length - 1),
+    mode: 'photo', scale: 1, tx: 0, ty: 0, vimgs: [], el: null
+  };
   var v = document.createElement('div');
   v.className = 'imgview';
-  v.innerHTML = '<img src="' + src + '" alt="">';
+  v.innerHTML = viewerHtml(post);
+  document.body.appendChild(v);
+  VW.el = v;
+  lockScroll();
+  var track = v.querySelector('.iv-track');
+  track.scrollLeft = VW.idx * track.clientWidth;
+  track.addEventListener('scroll', onViewerScroll);
+  bindViewerGestures(v, track);
+  bindViewerReply();
+  syncViewer();
+}
+function closeViewer() {
+  if (!VW) return;
+  if (VW.el) VW.el.remove();
+  VW = null;
+  unlockScroll();
+}
+function viewerHtml(post) {
+  var slides = VW.imgs.map(function (src) {
+    return '<div class="iv-slide"><img src="' + src + '" alt="" draggable="false"></div>';
+  }).join('');
+  return '<div class="iv-top">' +
+      '<button class="iv-btn" data-act="vw-close">' + ic('x', 22) + '</button>' +
+      (VW.imgs.length > 1 ? '<span class="iv-cnt">' + (VW.idx + 1) + '/' + VW.imgs.length + '</span>' : '') +
+    '</div>' +
+    '<div class="iv-track">' + slides + '</div>' +
+    '<div class="iv-acts">' + viewerActsHtml(post) + '</div>' +
+    '<div class="iv-sheet">' +
+      '<div class="iv-grab" data-act="vw-photo"><i></i></div>' +
+      '<div class="iv-sh-head">답글 <span class="iv-rc"></span></div>' +
+      '<div class="iv-list"></div>' +
+      '<div class="iv-reply">' +
+        '<div class="iv-mn"></div><div class="iv-thumbs"></div>' +
+        '<div class="rb-pill open">' +
+          '<span data-long="me">' + avatarHtml(ME, 'sm') + '</span>' +
+          '<textarea class="rb-ta" id="iv-ta" rows="1" placeholder="답글 달기..."></textarea>' +
+          '<button class="rb-ic" data-act="vw-img">' + ic('image', 21) + '</button>' +
+          '<button class="rb-post" data-act="vw-submit" disabled>게시</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+function viewerActsHtml(post) {
+  var liked = !!MY_LIKE[post.id], lc = likeCount(post), rc = replyCount(post.id), pc = repostCount(post);
+  return '<button class="p-act' + (liked ? ' liked' : '') + '" data-act="like" data-long="like" data-id="' + post.id + '">' +
+      (liked ? icHeartFill(24) : ic('heart', 24)) + (lc ? '<span class="cnt">' + lc + '</span>' : '') + '</button>' +
+    '<button class="p-act" data-act="vw-cm">' + ic('bubble', 24) + (rc ? '<span class="cnt">' + rc + '</span>' : '') + '</button>' +
+    '<button class="p-act' + (MY_RP[post.id] ? ' reposted' : '') + '" data-act="repost" data-long="repost" data-id="' + post.id + '">' +
+      ic('repost', 24) + (pc ? '<span class="cnt">' + pc + '</span>' : '') + '</button>';
+}
+// 글/좋아요/계정이 바뀌어 render()가 돌면 뷰어의 숫자와 답글 목록도 따라간다
+function refreshViewer() {
+  if (!VW || !VW.el) return;
+  var post = postById(VW.pid);
+  if (!post) { closeViewer(); return; }
+  VW.el.querySelector('.iv-acts').innerHTML = viewerActsHtml(post);
+  var av = VW.el.querySelector('.iv-reply [data-long="me"]');
+  if (av) av.innerHTML = avatarHtml(ME, 'sm');
+  if (VW.mode === 'cm') renderViewerSheet();
+}
+function onViewerScroll() {
+  if (!VW) return;
+  var t = VW.el.querySelector('.iv-track');
+  var i = Math.round(t.scrollLeft / t.clientWidth);
+  if (i !== VW.idx && i >= 0 && i < VW.imgs.length) {
+    VW.idx = i;
+    VW.scale = 1; VW.tx = 0; VW.ty = 0;
+    t.querySelectorAll('.iv-slide img').forEach(function (im) { im.style.transform = ''; });
+    t.classList.remove('zoomed');
+    var c = VW.el.querySelector('.iv-cnt');
+    if (c) c.textContent = (VW.idx + 1) + '/' + VW.imgs.length;
+  }
+}
+function setViewerMode(m) {
+  if (!VW) return;
+  VW.mode = m;
+  VW.el.classList.toggle('cm', m === 'cm');
+  if (m === 'cm') renderViewerSheet();
+  // 트랙 높이가 바뀌어도 현재 장이 가운데 오도록 다시 맞춘다
+  setTimeout(function () {
+    if (!VW) return;
+    var t = VW.el.querySelector('.iv-track');
+    t.scrollLeft = VW.idx * t.clientWidth;
+  }, 300);
+}
+function renderViewerSheet() {
+  var post = postById(VW.pid);
+  if (!post) return;
+  var kids = childrenOf(post.id, false);
+  VW.el.querySelector('.iv-rc').textContent = kids.length ? kids.length + '개' : '';
+  VW.el.querySelector('.iv-list').innerHTML = kids.length
+    ? kids.map(function (k, i) { return replyTree(k, 0, i > 0); }).join('')
+    : '<p class="empty" style="padding:40px 20px">첫 번째 답글을 남겨보세요.</p>';
+}
+function syncViewer() {
+  if (!VW || !VW.el || !window.visualViewport) return;
+  var vv = window.visualViewport;
+  VW.el.style.height = vv.height + 'px';
+  VW.el.style.top = vv.offsetTop + 'px';
+}
+function bindViewerGestures(v, track) {
+  var g = { startDist: 0, startScale: 1, pan: null, swipe: null, lastTap: 0, pinchMid: null };
+  function img() { return track.querySelectorAll('.iv-slide img')[VW.idx]; }
+  function apply() {
+    var im = img(); if (!im) return;
+    im.style.transform = 'translate(' + VW.tx + 'px,' + VW.ty + 'px) scale(' + VW.scale + ')';
+    track.classList.toggle('zoomed', VW.scale > 1.02);
+  }
+  function clamp() {
+    var im = img(); if (!im) return;
+    var maxX = Math.max(0, (im.clientWidth * VW.scale - track.clientWidth) / 2);
+    var maxY = Math.max(0, (im.clientHeight * VW.scale - track.clientHeight) / 2);
+    VW.tx = Math.min(maxX, Math.max(-maxX, VW.tx));
+    VW.ty = Math.min(maxY, Math.max(-maxY, VW.ty));
+  }
+  function reset() { VW.scale = 1; VW.tx = 0; VW.ty = 0; apply(); }
+  function zoomAt(x, y, s) {
+    var im = img(); if (!im) return;
+    var r = im.getBoundingClientRect();
+    VW.scale = s;
+    VW.tx = (r.left + r.width / 2 - x) * (s - 1);
+    VW.ty = (r.top + r.height / 2 - y) * (s - 1);
+    clamp(); apply();
+  }
+  function dist(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+  VW.zoomAt = zoomAt; VW.resetZoom = reset;
+
+  track.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) {
+      g.startDist = dist(e.touches[0], e.touches[1]);
+      g.startScale = VW.scale;
+      g.pinchMid = { x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
+      g.swipe = null;
+    } else if (e.touches.length === 1) {
+      var t = e.touches[0];
+      g.swipe = { x: t.clientX, y: t.clientY, moved: false };
+      g.pan = { x: t.clientX - VW.tx, y: t.clientY - VW.ty };
+    }
+  }, { passive: true });
+
+  track.addEventListener('touchmove', function (e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      var s = g.startScale * dist(e.touches[0], e.touches[1]) / (g.startDist || 1);
+      VW.scale = Math.min(4, Math.max(1, s));
+      clamp(); apply();
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    var t = e.touches[0];
+    if (VW.scale > 1.02) {
+      e.preventDefault();
+      VW.tx = t.clientX - g.pan.x; VW.ty = t.clientY - g.pan.y;
+      clamp(); apply();
+      return;
+    }
+    if (!g.swipe) return;
+    var dx = t.clientX - g.swipe.x, dy = t.clientY - g.swipe.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) g.swipe.moved = true;
+    // 세로가 우세한 끌기: 사진이 손가락을 따라오고 배경이 옅어진다
+    if (VW.mode === 'photo' && Math.abs(dy) > Math.abs(dx) * 1.3 && Math.abs(dy) > 10) {
+      track.style.transform = 'translateY(' + dy * 0.5 + 'px)';
+      v.style.background = 'rgba(0,0,0,' + Math.max(0.35, 1 - Math.abs(dy) / 500) + ')';
+    }
+  }, { passive: false });
+
+  track.addEventListener('touchend', function (e) {
+    if (e.touches.length === 0 && g.swipe) {
+      var ct = e.changedTouches[0];
+      var dx = ct.clientX - g.swipe.x, dy = ct.clientY - g.swipe.y;
+      track.style.transform = ''; v.style.background = '';
+      if (VW.scale <= 1.02 && Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(dx) * 1.3) {
+        if (dy < 0) setViewerMode('cm');
+        else if (VW.mode === 'cm') setViewerMode('photo');
+        else closeViewer();
+        g.swipe = null; return;
+      }
+      if (!g.swipe.moved) {
+        var now = Date.now();
+        if (now - g.lastTap < 300) {        // 더블탭
+          if (VW.scale > 1.02) reset(); else zoomAt(ct.clientX, ct.clientY, 2.5);
+          g.lastTap = 0;
+        } else g.lastTap = now;
+      }
+      g.swipe = null;
+    }
+    if (VW && e.touches.length < 2 && VW.scale < 1.05) reset();
+  });
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) {
+    v.addEventListener(n, function (e) { e.preventDefault(); });
+  });
+  // 데스크톱: Ctrl+휠 줌, 더블클릭 줌, 빈 배경 클릭으로 닫기
+  track.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    var s = Math.min(4, Math.max(1, VW.scale * (e.deltaY < 0 ? 1.12 : 0.9)));
+    if (s < 1.05) reset(); else { VW.scale = s; clamp(); apply(); }
+  }, { passive: false });
+  track.addEventListener('dblclick', function (e) {
+    if (VW.scale > 1.02) reset(); else zoomAt(e.clientX, e.clientY, 2.5);
+  });
+  track.addEventListener('click', function (e) {
+    if (e.target.classList.contains('iv-slide') && VW.mode === 'photo') closeViewer();
+  });
+  // 시트 손잡이를 아래로 끌면 사진 모드로
+  var sheet = v.querySelector('.iv-sheet');
+  var sy = null;
+  sheet.addEventListener('touchstart', function (e) {
+    var h = e.target.closest('.iv-grab, .iv-sh-head');
+    sy = h ? e.touches[0].clientY : null;
+  }, { passive: true });
+  sheet.addEventListener('touchend', function (e) {
+    if (sy == null) return;
+    if (e.changedTouches[0].clientY - sy > 60) setViewerMode('photo');
+    sy = null;
+  });
+}
+function bindViewerReply() {
+  var ta = VW.el.querySelector('#iv-ta'), host = VW.el.querySelector('.iv-mn');
+  function sync() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 118) + 'px';
+    var b = VW.el.querySelector('[data-act="vw-submit"]');
+    if (ta.value.trim() || VW.vimgs.length) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+  }
+  VW.syncReply = sync;
+  ta.addEventListener('input', function () { mentionBox(ta, host, sync); sync(); });
+  ta.addEventListener('keyup', function () { mentionBox(ta, host, sync); });
+  ta.addEventListener('click', function () { mentionBox(ta, host, sync); });
+  ta.addEventListener('focus', function () { setTimeout(syncViewer, 80); });
+  ta.addEventListener('blur', function () {
+    setTimeout(function () { var b = host.querySelector('.mn-list'); if (b && document.activeElement !== ta) b.remove(); }, 150);
+  });
+  ta.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitViewerReply();
+  });
+}
+function renderViewerThumbs() {
+  if (!VW) return;
+  VW.el.querySelector('.iv-thumbs').innerHTML = VW.vimgs.map(function (src, i) {
+    return '<div class="c-thumb"><img src="' + src + '" alt=""><button data-act="vw-delimg" data-idx="' + i + '">✕</button></div>';
+  }).join('');
+  VW.syncReply();
+}
+async function submitViewerReply() {
+  if (!VW) return;
+  var ta = VW.el.querySelector('#iv-ta');
+  var text = ta.value.trim();
+  if (!text && !VW.vimgs.length) return;
+  await put('posts', {
+    author_id: ME.id, text: text, imgs: VW.vimgs.slice(),
+    parent_id: VW.pid, chain_of: null, topic: null, ts: Date.now()
+  });
+  ta.value = ''; VW.vimgs = [];
+  renderViewerThumbs();
+  await render();              // refreshViewer()가 숫자와 목록을 갱신한다
+  if (VW) { var l = VW.el.querySelector('.iv-list'); l.scrollTop = l.scrollHeight; }
+  toast('답글을 남겼습니다');
+}
+
+function openImg(src) {        // 글에 속하지 않은 단일 이미지용 (현재는 예비)
+  var v = document.createElement('div');
+  v.className = 'imgview';
+  v.innerHTML = '<div class="iv-track"><div class="iv-slide"><img src="' + src + '" alt=""></div></div>';
   v.addEventListener('click', function () { v.remove(); });
   document.body.appendChild(v);
 }
@@ -2338,16 +2684,19 @@ function openImg(src) {
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') {
     closeOvl();
-    var iv = document.querySelector('.imgview');
-    if (iv) iv.remove();
+    closeViewer();
     if (RB_OPEN) { RB_OPEN = false; drawReplyBar(); }
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && RB_OPEN) { submitReplyBar(); }
+  if (VW && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && document.activeElement.id !== 'iv-ta') {
+    var tr = VW.el.querySelector('.iv-track');
+    tr.scrollBy({ left: (e.key === 'ArrowRight' ? 1 : -1) * tr.clientWidth, behavior: 'smooth' });
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && document.querySelector('[data-act="c-submit"]')) {
     submitComposer();
   }
 });
-window.addEventListener('hashchange', function () { closeOvl(); render(); });
+window.addEventListener('hashchange', function () { closeOvl(); closeViewer(); render(); });
 
 // ===== 잠금 =====
 var K_LOCK = 'th-lock';
