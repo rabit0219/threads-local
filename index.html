@@ -12,6 +12,7 @@
   --avbg: #d8d8d8; --avfg: #ffffff;
 }
 html[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0a0a0a; --bg2: #181818; --fg: #f3f5f7; --muted: #777777;
   --line: #262626; --line2: #333333; --btn: #ffffff; --btnfg: #000000;
   --like: #ff3040; --sheet: #181818; --ovl: rgba(0,0,0,.6); --field: #101010;
@@ -481,7 +482,7 @@ body.locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden;
 // =====================================================================
 // 로컬 쓰레드 — 단일 HTML / IndexedDB / 서버 없음
 // =====================================================================
-var APP_VER = 'v1.15';
+var APP_VER = 'v1.16';
 var DB_NAME = 'threads-local';
 var K_ME = 'th-me';
 var K_THEME = 'th-theme';
@@ -920,7 +921,7 @@ function postRow(p, o) {
   var rc = replyCount(p.id);
   var pc = repostCount(p);
   var cls = 'post' + (o.sep ? ' sep' : '') + (o.detail ? ' detail' : '') + (o.detail ? '' : ' clickable');
-  var attrs = o.detail ? '' : ' data-act="open" data-id="' + p.id + '"';
+  var attrs = ' data-long="edit" data-id="' + p.id + '"' + (o.detail ? '' : ' data-act="open"');
 
   var imgs = '';
   if (p.imgs && p.imgs.length) {
@@ -953,7 +954,7 @@ function postRow(p, o) {
         '<span class="p-name" data-act="user" data-long="user" data-id="' + u.id + '">' + esc(u.handle) + '</span>' +
         (p.topic ? '<span class="p-topic" data-act="topic" data-topic="' + esc(p.topic) + '">' +
           '<span class="chev">›</span>' + esc(p.topic) + '</span>' : '') +
-        (o.detail ? '' : '<span class="p-time">' + rel(p.ts) + '</span>') +
+        (o.detail ? '' : '<span class="p-time" data-long="ts" data-id="' + p.id + '">' + rel(p.ts) + '</span>') +
         '<span class="p-sp"></span>' +
         '<button class="p-more" data-act="more" data-id="' + p.id + '">' + ic('more', 18) + '</button>' +
       '</div>' +
@@ -1033,7 +1034,7 @@ function viewPost(id) {
   var html = '';
   anc.forEach(function (a) { html += postRow(a, { rail: true }); });
   html += postRow(p, { detail: true, sep: anc.length > 0 });
-  html += '<div class="detail-stats">' + fullTime(p.ts) +
+  html += '<div class="detail-stats" data-long="ts" data-id="' + p.id + '">' + fullTime(p.ts) +
     ' · 좋아요 ' + likeCount(p) + '개 · 답글 ' + replyCount(p.id) + '개 · 리포스트 ' + repostCount(p) + '개</div>';
 
   // 체인 뒷부분
@@ -1363,6 +1364,12 @@ function viewSettings() {
     '<div class="row-t">아이디를 꾹 누르면</div>' +
     '<div class="row-s" style="white-space:normal">그 계정으로 바로 전환됩니다. ' +
     '작성·답글 화면에서 내 아바타를 꾹 누르면 계정 목록이 열립니다</div></div></div>';
+  html += '<div class="row" style="align-items:flex-start"><div class="row-main">' +
+    '<div class="row-t">글이나 답글을 꾹 누르면</div>' +
+    '<div class="row-s" style="white-space:normal">본문·사진·주제를 수정할 수 있습니다</div></div></div>';
+  html += '<div class="row" style="align-items:flex-start"><div class="row-main">' +
+    '<div class="row-t">작성 시간을 꾹 누르면</div>' +
+    '<div class="row-s" style="white-space:normal">날짜와 시각을 바꿀 수 있습니다. 피드 순서도 따라 바뀝니다</div></div></div>';
 
   html += '<p class="empty" style="padding:28px 20px 20px;font-size:13px">로컬 쓰레드 ' + APP_VER +
     '<br>이 기기의 브라우저에만 저장됩니다.</p>';
@@ -1479,6 +1486,7 @@ var CBOX = [];
 var CREPLY = null;
 var CTOPIC = '';
 var CQUOTE = null;      // 인용 대상 글 id
+var CEDIT = null;       // 수정 중인 글 id
 function allTopics() {
   var seen = {}, out = [];
   POSTS.forEach(function (p) {
@@ -1489,6 +1497,9 @@ function allTopics() {
 function composerHtml() {
   var isReply = CREPLY != null;
   var isQuote = CQUOTE != null;
+  var isEdit = CEDIT != null;
+  var editPost = isEdit ? postById(CEDIT) : null;
+  var editIsReply = !!(editPost && editPost.parent_id != null);
   var canPost = CBOX.some(function (b) { return b.text.trim() || b.imgs.length; });
   var last = CBOX.length - 1;
   var boxes = CBOX.map(function (b, i) {
@@ -1496,7 +1507,7 @@ function composerHtml() {
       '<div class="p-col-l">' + avatarHtml(ME) + (i < last ? '<div class="rail"></div>' : '') + '</div>' +
       '<div class="p-col-r">' +
         '<div class="c-name"><span data-long="me">' + esc(ME.handle) + '</span>' +
-          (!isReply && i === 0 ? '<span class="chev">›</span>' +
+          (!isReply && !editIsReply && i === 0 ? '<span class="chev">›</span>' +
             '<input class="c-topic" id="c-topic" value="' + esc(CTOPIC) + '" list="topic-list" ' +
             'placeholder="커뮤니티 또는 주제" maxlength="30" autocomplete="off">' +
             '<datalist id="topic-list">' + allTopics().map(function (t) {
@@ -1518,13 +1529,13 @@ function composerHtml() {
   }).join('');
 
   var lastReady = !!(CBOX[last] && (CBOX[last].text.trim() || CBOX[last].imgs.length));
-  var addRow = (isReply || isQuote) ? '' : addRowHtml(lastReady);
+  var addRow = (isReply || isQuote || isEdit) ? '' : addRowHtml(lastReady);
 
   return '<div class="modal">' +
     '<div class="modal-h">' +
       '<button class="m-c" data-act="c-cancel">취소</button>' +
-      '<div class="m-t">' + (isReply ? '답글' : (isQuote ? '인용' : '새 스레드')) + '</div>' +
-      '<button class="m-d" data-act="c-submit"' + (canPost ? '' : ' disabled') + '>게시</button>' +
+      '<div class="m-t">' + (isEdit ? '수정' : isReply ? '답글' : (isQuote ? '인용' : '새 스레드')) + '</div>' +
+      '<button class="m-d" data-act="c-submit"' + (canPost ? '' : ' disabled') + '>' + (isEdit ? '저장' : '게시') + '</button>' +
     '</div>' +
     '<div class="modal-b">' + boxes +
       (isQuote ? '<div class="c-quote">' + quoteCard(CQUOTE) + '</div>' : '') +
@@ -1585,9 +1596,18 @@ function drawComposer(focusBox) {
     setTimeout(syncOvl, 60);
   }
 }
+function openPostEdit(pid) {
+  var post = postById(pid);
+  if (!post) return;
+  CREPLY = null; CQUOTE = null; CEDIT = pid;
+  CBOX = [{ text: post.text || '', imgs: (post.imgs || []).slice() }];
+  CTOPIC = post.topic || '';
+  drawComposer(0);
+}
 function openComposer(replyTo, quoteOf) {
   CREPLY = replyTo == null ? null : replyTo;
   CQUOTE = quoteOf == null ? null : quoteOf;
+  CEDIT = null;
   CBOX = [{ text: '', imgs: [] }];
   CTOPIC = '';
   drawComposer(0);
@@ -1597,6 +1617,20 @@ async function submitComposer() {
   if (!boxes.length) return;
   var t = Date.now();
   var topic = (CTOPIC || '').trim().replace(/^[#›\s]+/, '').slice(0, 30) || null;
+  if (CEDIT != null) {
+    var ep = postById(CEDIT);
+    if (ep) {
+      ep.text = boxes[0].text.trim();
+      ep.imgs = boxes[0].imgs;
+      if (ep.parent_id == null) ep.topic = topic;
+      await put('posts', ep);
+    }
+    closeOvl();
+    CBOX = []; CEDIT = null; CTOPIC = '';
+    await render();
+    toast('수정했습니다');
+    return;
+  }
   if (CREPLY != null) {
     await put('posts', {
       author_id: ME.id, text: boxes[0].text.trim(), imgs: boxes[0].imgs,
@@ -1630,6 +1664,8 @@ function openMore(pid) {
   openOvl('<div class="sheet"><div class="sheet-grab"></div>' +
     '<button class="row" data-act="open" data-id="' + pid + '"><div class="row-main">' +
       '<div class="row-t">스레드 열기</div></div></button>' +
+    '<button class="row" data-act="edit-post" data-id="' + pid + '"><div class="row-main">' +
+      '<div class="row-t">수정</div></div></button>' +
     '<button class="row" data-act="user" data-id="' + u.id + '"><div class="row-main">' +
       '<div class="row-t">' + esc(u.handle) + ' 프로필</div></div></button>' +
     (mine ? '<button class="row danger" data-act="del-post" data-id="' + pid + '"><div class="row-main">' +
@@ -2159,6 +2195,7 @@ document.addEventListener('click', async function (e) {
   if (act === 'rb-delimg') { RB_IMGS.splice(parseInt(el.dataset.idx, 10), 1); drawReplyBar(); return; }
   if (act === 'more') { e.stopPropagation(); openMore(id); return; }
   if (act === 'compose') { openComposer(null); return; }
+  if (act === 'edit-post') { closeOvl(); openPostEdit(id); return; }
   if (act === 'del-post') {
     closeOvl();
     if (!confirm('이 스레드와 달린 답글을 모두 삭제할까요?')) return;
@@ -2187,7 +2224,7 @@ document.addEventListener('click', async function (e) {
   if (act === 'c-cancel') {
     var dirty = CBOX.some(function (b) { return b.text.trim() || b.imgs.length; });
     if (dirty && !confirm('작성 중인 내용을 버릴까요?')) return;
-    closeOvl(); CBOX = []; CREPLY = null; CQUOTE = null;
+    closeOvl(); CBOX = []; CREPLY = null; CQUOTE = null; CEDIT = null;
     return;
   }
   if (act === 'c-submit') { await submitComposer(); return; }
@@ -2241,6 +2278,12 @@ document.addEventListener('click', async function (e) {
     return;
   }
   if (act === 'gen-del') { await deleteGenerated(); return; }
+  if (act === 'ts-preset') {
+    var tin = document.getElementById('ts-in');
+    if (tin) tin.value = tsToInput(Date.now() - parseInt(el.dataset.min, 10) * 60000);
+    return;
+  }
+  if (act === 'ts-save') { await saveTime(); return; }
   if (act === 'lk-save') { await saveLikeCount(false); return; }
   if (act === 'lk-reset') { await saveLikeCount(true); return; }
   if (act === 'passwd') { await changePassword(); return; }
@@ -2311,6 +2354,8 @@ function lpFire(el) {
   if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
   if (kind === 'like') openCountSheet(id, 'like');
   else if (kind === 'repost') openCountSheet(id, 'repost');
+  else if (kind === 'ts') openTimeSheet(id);
+  else if (kind === 'edit') openPostEdit(id);
   else if (kind === 'me') openSwitcher();
   else if (kind === 'user') {
     if (!UMAP[id]) return;                 // 지워진 계정이면 반응 없음
@@ -2355,6 +2400,44 @@ document.addEventListener('contextmenu', function (e) {
 });
 
 // ===== 좋아요 개수 직접 지정 =====
+// ===== 작성 일시 변경 =====
+var TS_PID = null;
+function tsToInput(ts) {
+  var d = new Date(ts);
+  function p2(n) { return String(n).padStart(2, '0'); }
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) +
+    'T' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+function openTimeSheet(pid) {
+  var post = postById(pid);
+  if (!post) return;
+  TS_PID = pid;
+  openOvl('<div class="sheet"><div class="sheet-grab"></div>' +
+    '<div class="sheet-h">작성 일시</div>' +
+    '<div class="field"><label>지금은 ' + fullTime(post.ts) + '</label>' +
+      '<input id="ts-in" type="datetime-local" step="60" value="' + tsToInput(post.ts) + '"></div>' +
+    '<div class="gen-presets">' +
+      '<button data-act="ts-preset" data-min="0">방금</button>' +
+      '<button data-act="ts-preset" data-min="60">1시간 전</button>' +
+      '<button data-act="ts-preset" data-min="1440">어제</button>' +
+      '<button data-act="ts-preset" data-min="10080">일주일 전</button>' +
+    '</div>' +
+    '<button class="btn-fill" data-act="ts-save">확인</button>' +
+    '</div>', true);
+}
+async function saveTime() {
+  var post = postById(TS_PID);
+  if (!post) { closeOvl(); return; }
+  var el = document.getElementById('ts-in');
+  var t = el && el.value ? new Date(el.value).getTime() : NaN;
+  if (isNaN(t)) { toast('날짜와 시각을 확인해주세요'); return; }
+  post.ts = t;
+  await put('posts', post);
+  closeOvl();
+  await render();
+  toast('작성 일시를 ' + fullTime(t) + '로 바꿨습니다');
+}
+
 var LK_PID = null, LK_KIND = 'like';
 function cntReal(pid, kind) { return (kind === 'like' ? LIKE_CNT[pid] : RP_CNT[pid]) || 0; }
 function cntShown(post, kind) { return kind === 'like' ? likeCount(post) : repostCount(post); }
